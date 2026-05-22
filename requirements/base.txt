@@ -1,0 +1,15 @@
+Django
+djangorestframework
+djangorestframework-simplejwt
+django-filter
+django-cors-headers
+channels
+channels-redis
+psycopg[binary]
+Pillow
+python-decouple
+redis
+celery
+gunicorn
+uvicorn
+daphne
