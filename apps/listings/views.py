@@ -5,12 +5,14 @@ from rest_framework import generics, permissions, status
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from .models import Listing
+from .models import Listing, ListingImage
 from .permissions import IsListingOwnerOrReadOnly, IsNotBanned
 from .serializers import (
     ListingListSerializer,
     ListingDetailSerializer,
     ListingCreateUpdateSerializer,
+    ListingImageSerializer,
+
 )
 
 
@@ -111,6 +113,96 @@ class MarkListingSoldAPIView(APIView):
         return Response(
             {
                 "message": "Listing marked as sold successfully."
+            },
+            status=status.HTTP_200_OK,
+        )
+
+class ListingImageUploadAPIView(APIView):
+    permission_classes = [
+        permissions.IsAuthenticated,
+        IsNotBanned,
+    ]
+
+    def post(self, request, pk):
+        try:
+            listing = Listing.objects.get(
+                pk=pk,
+                seller=request.user,
+            )
+        except Listing.DoesNotExist:
+            return Response(
+                {
+                    "detail": "Listing not found."
+                },
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        image_count = listing.images.count()
+
+        if image_count >= 10:
+            return Response(
+                {
+                    "detail": "A listing cannot have more than 10 images."
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        serializer = ListingImageSerializer(data=request.data)
+
+        if serializer.is_valid():
+            image = serializer.save(
+                listing=listing,
+                sort_order=image_count,
+            )
+
+            if listing.images.count() == 1:
+                image.is_primary = True
+                image.save(update_fields=["is_primary"])
+
+            return Response(
+                ListingImageSerializer(image, context={"request": request}).data,
+                status=status.HTTP_201_CREATED,
+            )
+
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+class ListingImageDeleteAPIView(APIView):
+    permission_classes = [
+        permissions.IsAuthenticated,
+        IsNotBanned,
+    ]
+
+    def delete(self, request, pk, image_id):
+        try:
+            image = ListingImage.objects.select_related("listing").get(
+                pk=image_id,
+                listing_id=pk,
+                listing__seller=request.user,
+            )
+        except ListingImage.DoesNotExist:
+            return Response(
+                {
+                    "detail": "Image not found."
+                },
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        was_primary = image.is_primary
+        listing = image.listing
+
+        image.delete()
+
+        if was_primary:
+            next_image = listing.images.order_by("sort_order", "id").first()
+
+            if next_image:
+                next_image.is_primary = True
+                next_image.save(update_fields=["is_primary"])
+
+        return Response(
+            {
+                "message": "Image deleted successfully."
             },
             status=status.HTTP_200_OK,
         )
