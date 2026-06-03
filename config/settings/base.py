@@ -52,6 +52,7 @@ INSTALLED_APPS = [
     "apps.locations.apps.LocationsConfig",
     "apps.categories.apps.CategoriesConfig",
     "apps.listings.apps.ListingsConfig",
+    "apps.favorites.apps.FavoritesConfig",
 ]
 
 
