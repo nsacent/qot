@@ -49,6 +49,7 @@ INSTALLED_APPS = [
     "channels",
 
     "apps.accounts.apps.AccountsConfig",
+    "apps.locations.apps.LocationsConfig",
 ]
 
 
