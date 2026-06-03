@@ -1,5 +1,6 @@
 from django.db.models import F
 from django.utils.text import slugify
+from .filters import ListingFilter
 
 from rest_framework import generics, permissions, status
 from rest_framework.response import Response
@@ -18,6 +19,7 @@ from .serializers import (
 
 class ListingListCreateAPIView(generics.ListCreateAPIView):
     permission_classes = [permissions.IsAuthenticatedOrReadOnly]
+    filterset_class = ListingFilter
 
     def get_serializer_class(self):
         if self.request.method == "POST":
@@ -45,6 +47,29 @@ class ListingListCreateAPIView(generics.ListCreateAPIView):
         base_slug = slugify(listing.title)
         listing.slug = f"{base_slug}-{listing.id}"
         listing.save(update_fields=["slug"])
+        
+
+    def filter_queryset(self, queryset):
+        queryset = super().filter_queryset(queryset)
+
+        sort = self.request.query_params.get("sort")
+
+        if sort == "newest":
+            return queryset.order_by("-created_at")
+
+        if sort == "oldest":
+            return queryset.order_by("created_at")
+
+        if sort == "price_low":
+            return queryset.order_by("price")
+
+        if sort == "price_high":
+            return queryset.order_by("-price")
+
+        if sort == "popular":
+            return queryset.order_by("-views_count", "-created_at")
+
+        return queryset.order_by("-created_at")
 
 
 class ListingDetailAPIView(generics.RetrieveUpdateDestroyAPIView):
