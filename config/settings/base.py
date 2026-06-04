@@ -54,6 +54,7 @@ INSTALLED_APPS = [
     "apps.listings.apps.ListingsConfig",
     "apps.favorites.apps.FavoritesConfig",
     "apps.chats.apps.ChatsConfig",
+    "apps.notifications.apps.NotificationsConfig",
 ]
 
 
