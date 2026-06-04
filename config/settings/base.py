@@ -55,6 +55,7 @@ INSTALLED_APPS = [
     "apps.favorites.apps.FavoritesConfig",
     "apps.chats.apps.ChatsConfig",
     "apps.notifications.apps.NotificationsConfig",
+    "apps.moderation.apps.ModerationConfig",
 ]
 
 
