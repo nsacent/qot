@@ -3,6 +3,7 @@ import json
 from asgiref.sync import sync_to_async
 from channels.generic.websocket import AsyncWebsocketConsumer
 from django.utils import timezone
+from apps.notifications.services import create_message_notification
 
 from .models import ChatThread, ChatMessage
 
@@ -127,6 +128,8 @@ class ChatConsumer(AsyncWebsocketConsumer):
                 "seller_unread_count",
             ]
         )
+
+        create_message_notification(thread, message)
 
         return {
             "id": message.id,

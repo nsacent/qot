@@ -15,6 +15,8 @@ from .serializers import (
     ChatMessageCreateSerializer,
 )
 
+from apps.notifications.services import create_message_notification
+
 
 class ChatThreadListCreateAPIView(generics.ListCreateAPIView):
     permission_classes = [permissions.IsAuthenticated]
@@ -173,6 +175,8 @@ class ChatMessageListCreateAPIView(generics.ListCreateAPIView):
                 "seller_unread_count",
             ]
         )
+
+        create_message_notification(thread, message)
 
         return Response(
             ChatMessageSerializer(message, context={"request": request}).data,
