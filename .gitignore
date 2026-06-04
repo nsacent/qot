@@ -27,4 +27,4 @@ logs/
 # Cache
 .pytest_cache/
 .coverage
-htmlcov/
+htmlcov/.htaccess
