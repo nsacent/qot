@@ -1,4 +1,58 @@
+from asgiref.sync import async_to_sync
+from channels.layers import get_channel_layer
+
 from .models import Notification
+
+
+def broadcast_notification(notification):
+    channel_layer = get_channel_layer()
+
+    if channel_layer is None:
+        return
+
+    group_name = f"user_notifications_{notification.user_id}"
+
+    payload = {
+        "id": notification.id,
+        "notification_type": notification.notification_type,
+        "title": notification.title,
+        "message": notification.message,
+        "listing": notification.listing_id,
+        "chat_thread": notification.chat_thread_id,
+        "is_read": notification.is_read,
+        "created_at": notification.created_at.isoformat(),
+    }
+
+    async_to_sync(channel_layer.group_send)(
+        group_name,
+        {
+            "type": "notification_message",
+            "notification": payload,
+        },
+    )
+
+
+def create_notification(
+    *,
+    user,
+    notification_type,
+    title,
+    message,
+    listing=None,
+    chat_thread=None,
+):
+    notification = Notification.objects.create(
+        user=user,
+        notification_type=notification_type,
+        title=title,
+        message=message,
+        listing=listing,
+        chat_thread=chat_thread,
+    )
+
+    broadcast_notification(notification)
+
+    return notification
 
 
 def create_message_notification(thread, message):
@@ -9,7 +63,7 @@ def create_message_notification(thread, message):
     else:
         recipient = thread.buyer
 
-    return Notification.objects.create(
+    return create_notification(
         user=recipient,
         notification_type=Notification.TYPE_MESSAGE,
         title="New message",
@@ -18,8 +72,9 @@ def create_message_notification(thread, message):
         chat_thread=thread,
     )
 
+
 def create_listing_approved_notification(listing):
-    return Notification.objects.create(
+    return create_notification(
         user=listing.seller,
         notification_type=Notification.TYPE_LISTING_APPROVED,
         title="Listing approved",
@@ -31,7 +86,7 @@ def create_listing_approved_notification(listing):
 def create_listing_rejected_notification(listing):
     reason = listing.rejection_reason or "Please review your listing details."
 
-    return Notification.objects.create(
+    return create_notification(
         user=listing.seller,
         notification_type=Notification.TYPE_LISTING_REJECTED,
         title="Listing rejected",
@@ -41,7 +96,7 @@ def create_listing_rejected_notification(listing):
 
 
 def create_listing_expired_notification(listing):
-    return Notification.objects.create(
+    return create_notification(
         user=listing.seller,
         notification_type=Notification.TYPE_LISTING_EXPIRED,
         title="Listing expired",
