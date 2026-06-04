@@ -1,0 +1,21 @@
+name: Deploy QOT Backend
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Deploy to Contabo VPS
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.QOT_VPS_HOST }}
+          username: ${{ secrets.QOT_VPS_USER }}
+          key: ${{ secrets.QOT_VPS_SSH_KEY }}
+          port: 22
+          script: |
+            /home/qot.ug/deploy_qot.sh
