@@ -9,6 +9,8 @@ from .views import (
     MeAPIView,
     PasswordResetRequestAPIView,
     PasswordResetConfirmAPIView,
+    SendVerificationCodeAPIView,
+    ConfirmVerificationCodeAPIView,
 )
 
 app_name = "accounts"
@@ -30,5 +32,16 @@ urlpatterns = [
         "password-reset/confirm/",
         PasswordResetConfirmAPIView.as_view(),
         name="password_reset_confirm",
+    ),
+
+    path(
+        "verification/send/",
+        SendVerificationCodeAPIView.as_view(),
+        name="verification_send",
+    ),
+    path(
+        "verification/confirm/",
+        ConfirmVerificationCodeAPIView.as_view(),
+        name="verification_confirm",
     ),
 ]

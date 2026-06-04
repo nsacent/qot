@@ -18,7 +18,11 @@ from .serializers import (
     ProfileUpdateSerializer,
     PasswordResetRequestSerializer,
     PasswordResetConfirmSerializer,
+    SendVerificationCodeSerializer,
+    ConfirmVerificationCodeSerializer,
 )
+
+from .services import create_email_verification_code, verify_email_code
 
 
 def get_tokens_for_user(user):
@@ -168,3 +172,56 @@ class MeAPIView(generics.RetrieveUpdateAPIView):
 
     def get_object(self):
         return self.request.user
+    
+
+class SendVerificationCodeAPIView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        serializer = SendVerificationCodeSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        user = request.user
+
+        if user.is_verified:
+            return Response(
+                {"detail": "Account is already verified."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if not user.email:
+            return Response(
+                {"detail": "Email address is required for verification."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        create_email_verification_code(user)
+
+        return Response(
+            {"message": "Verification code sent successfully."},
+            status=status.HTTP_200_OK,
+        )
+
+
+class ConfirmVerificationCodeAPIView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        serializer = ConfirmVerificationCodeSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        success, message = verify_email_code(
+            request.user,
+            serializer.validated_data["code"],
+        )
+
+        if not success:
+            return Response(
+                {"detail": message},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        return Response(
+            {"message": message},
+            status=status.HTTP_200_OK,
+        )

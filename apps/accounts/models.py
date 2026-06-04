@@ -68,3 +68,61 @@ class UserProfile(models.Model):
 
     def __str__(self):
         return f"Profile: {self.user}"
+    
+
+class VerificationCode(models.Model):
+    PURPOSE_ACCOUNT_VERIFICATION = "account_verification"
+    PURPOSE_PASSWORD_RESET = "password_reset"
+
+    PURPOSE_CHOICES = [
+        (PURPOSE_ACCOUNT_VERIFICATION, "Account Verification"),
+        (PURPOSE_PASSWORD_RESET, "Password Reset"),
+    ]
+
+    CHANNEL_EMAIL = "email"
+    CHANNEL_PHONE = "phone"
+
+    CHANNEL_CHOICES = [
+        (CHANNEL_EMAIL, "Email"),
+        (CHANNEL_PHONE, "Phone"),
+    ]
+
+    user = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name="verification_codes",
+    )
+
+    purpose = models.CharField(
+        max_length=50,
+        choices=PURPOSE_CHOICES,
+        default=PURPOSE_ACCOUNT_VERIFICATION,
+    )
+
+    channel = models.CharField(
+        max_length=20,
+        choices=CHANNEL_CHOICES,
+        default=CHANNEL_EMAIL,
+    )
+
+    code = models.CharField(max_length=10)
+
+    is_used = models.BooleanField(default=False)
+
+    expires_at = models.DateTimeField()
+
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        indexes = [
+            models.Index(fields=["user", "purpose", "is_used"]),
+            models.Index(fields=["code"]),
+            models.Index(fields=["expires_at"]),
+        ]
+
+    def __str__(self):
+        return f"{self.user} - {self.purpose}"
+
+    def is_expired(self):
+        return timezone.now() > self.expires_at

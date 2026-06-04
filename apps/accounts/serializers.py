@@ -212,3 +212,13 @@ class PasswordResetConfirmSerializer(serializers.Serializer):
 
         return user
     
+class SendVerificationCodeSerializer(serializers.Serializer):
+    channel = serializers.ChoiceField(
+        choices=["email"],
+        default="email",
+    )
+
+
+class ConfirmVerificationCodeSerializer(serializers.Serializer):
+    code = serializers.CharField(max_length=10)
+    
