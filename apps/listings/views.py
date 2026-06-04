@@ -7,7 +7,8 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from .models import Listing, ListingImage
-from .permissions import IsListingOwnerOrReadOnly, IsNotBanned
+from .permissions import IsListingOwnerOrReadOnly
+
 from .serializers import (
     ListingListSerializer,
     ListingDetailSerializer,
@@ -16,10 +17,17 @@ from .serializers import (
 
 )
 
+from apps.common.permissions import IsNotBanned
+
 
 class ListingListCreateAPIView(generics.ListCreateAPIView):
-    permission_classes = [permissions.IsAuthenticatedOrReadOnly]
     filterset_class = ListingFilter
+
+    def get_permissions(self):
+        if self.request.method == "POST":
+            return [permissions.IsAuthenticated(), IsNotBanned()]
+
+        return [permissions.AllowAny()]
 
     def get_serializer_class(self):
         if self.request.method == "POST":
@@ -73,10 +81,15 @@ class ListingListCreateAPIView(generics.ListCreateAPIView):
 
 
 class ListingDetailAPIView(generics.RetrieveUpdateDestroyAPIView):
-    permission_classes = [
-        permissions.IsAuthenticatedOrReadOnly,
-        IsListingOwnerOrReadOnly,
-    ]
+    def get_permissions(self):
+        if self.request.method in permissions.SAFE_METHODS:
+            return [permissions.AllowAny()]
+
+        return [
+            permissions.IsAuthenticated(),
+            IsNotBanned(),
+            IsListingOwnerOrReadOnly(),
+        ]
 
     def get_serializer_class(self):
         if self.request.method in ["PUT", "PATCH"]:

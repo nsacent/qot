@@ -14,7 +14,7 @@ class ChatConsumer(AsyncWebsocketConsumer):
         self.room_group_name = f"chat_thread_{self.thread_id}"
         self.user = self.scope["user"]
 
-        if not self.user.is_authenticated:
+        if not self.user.is_authenticated or self.user.is_banned:
             await self.close()
             return
 
