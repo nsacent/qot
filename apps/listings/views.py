@@ -19,6 +19,9 @@ from .serializers import (
 
 from apps.common.permissions import IsNotBanned
 
+from datetime import timedelta
+from django.utils import timezone
+
 
 class ListingListCreateAPIView(generics.ListCreateAPIView):
     filterset_class = ListingFilter
@@ -154,6 +157,46 @@ class MarkListingSoldAPIView(APIView):
             },
             status=status.HTTP_200_OK,
         )
+
+
+class RenewListingAPIView(APIView):
+    permission_classes = [
+        permissions.IsAuthenticated,
+        IsNotBanned,
+    ]
+
+    def post(self, request, pk):
+        try:
+            listing = Listing.objects.get(pk=pk, seller=request.user)
+        except Listing.DoesNotExist:
+            return Response(
+                {"detail": "Listing not found."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        if listing.status not in [
+            Listing.STATUS_ACTIVE,
+            Listing.STATUS_EXPIRED,
+        ]:
+            return Response(
+                {
+                    "detail": "Only active or expired listings can be renewed."
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        listing.status = Listing.STATUS_ACTIVE
+        listing.expires_at = timezone.now() + timedelta(days=30)
+        listing.save(update_fields=["status", "expires_at", "updated_at"])
+
+        return Response(
+            {
+                "message": "Listing renewed successfully.",
+                "expires_at": listing.expires_at,
+            },
+            status=status.HTTP_200_OK,
+        )
+
 
 class ListingImageUploadAPIView(APIView):
     permission_classes = [

@@ -1,6 +1,7 @@
 from rest_framework import serializers
-
 from .models import Listing, ListingImage, ListingAttribute
+from datetime import timedelta
+from django.utils import timezone
 
 
 class ListingImageSerializer(serializers.ModelSerializer):
@@ -184,5 +185,6 @@ class ListingCreateUpdateSerializer(serializers.ModelSerializer):
         return Listing.objects.create(
             seller=request.user,
             status=Listing.STATUS_PENDING,
+            expires_at=timezone.now() + timedelta(days=30),
             **validated_data,
         )
