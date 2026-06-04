@@ -15,6 +15,10 @@ from .serializers import (
     UserBanSerializer,
 )
 
+from apps.notifications.services import (
+    create_listing_approved_notification,
+    create_listing_rejected_notification,
+)
 
 class AdminDashboardAPIView(APIView):
     permission_classes = [permissions.IsAuthenticated, IsAdminOrModerator]
@@ -101,6 +105,8 @@ class ApproveListingAPIView(APIView):
         listing.rejection_reason = ""
         listing.save(update_fields=["status", "rejection_reason", "updated_at"])
 
+        create_listing_approved_notification(listing)
+
         return Response(
             {
                 "message": "Listing approved successfully.",
@@ -128,6 +134,8 @@ class RejectListingAPIView(APIView):
         listing.status = Listing.STATUS_REJECTED
         listing.rejection_reason = serializer.validated_data["rejection_reason"]
         listing.save(update_fields=["status", "rejection_reason", "updated_at"])
+
+        create_listing_rejected_notification(listing)
 
         return Response(
             {

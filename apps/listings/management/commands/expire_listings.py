@@ -2,6 +2,7 @@ from django.core.management.base import BaseCommand
 from django.utils import timezone
 
 from apps.listings.models import Listing
+from apps.notifications.services import create_listing_expired_notification
 
 
 class Command(BaseCommand):
@@ -10,18 +11,23 @@ class Command(BaseCommand):
     def handle(self, *args, **options):
         now = timezone.now()
 
-        queryset = Listing.objects.filter(
-            status=Listing.STATUS_ACTIVE,
-            expires_at__isnull=False,
-            expires_at__lt=now,
+        listings = list(
+            Listing.objects.filter(
+                status=Listing.STATUS_ACTIVE,
+                expires_at__isnull=False,
+                expires_at__lt=now,
+            ).select_related("seller")
         )
 
-        count = queryset.count()
+        count = 0
 
-        queryset.update(
-            status=Listing.STATUS_EXPIRED,
-            updated_at=now,
-        )
+        for listing in listings:
+            listing.status = Listing.STATUS_EXPIRED
+            listing.save(update_fields=["status", "updated_at"])
+
+            create_listing_expired_notification(listing)
+
+            count += 1
 
         self.stdout.write(
             self.style.SUCCESS(
