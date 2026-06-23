@@ -37,6 +37,7 @@ urlpatterns = [
     path("api/v1/sellers/", include("apps.sellers.urls")),
     path("api/v1/home/", include("apps.home.urls")),
     path("api/v1/me/", include("apps.me.urls")),
+    path("api/v1/searches/", include("apps.searches.urls")),
 ]
 
 
