@@ -135,6 +135,21 @@ class ListingDetailAPIView(generics.RetrieveUpdateDestroyAPIView):
         instance.soft_delete()
 
 
+    def retrieve(self, request, *args, **kwargs):
+        listing = self.get_object()
+
+        if request.method == "GET":
+            Listing.objects.filter(pk=listing.pk).update(
+                views_count=listing.views_count + 1
+            )
+
+            listing.refresh_from_db(fields=["views_count"])
+
+        serializer = self.get_serializer(listing)
+
+        return Response(serializer.data)
+
+
 class MarkListingSoldAPIView(APIView):
     permission_classes = [
         permissions.IsAuthenticated,
