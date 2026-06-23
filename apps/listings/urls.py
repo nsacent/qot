@@ -7,6 +7,7 @@ from .views import (
     RenewListingAPIView,
     ListingImageUploadAPIView,
     ListingImageDeleteAPIView,
+    SetPrimaryListingImageAPIView
 )
 
 from apps.moderation.views import ListingReportCreateAPIView
@@ -27,6 +28,11 @@ urlpatterns = [
         ListingImageDeleteAPIView.as_view(),
         name="listing_image_delete",
     ),
+    path(
+    "<int:pk>/images/<int:image_id>/set-primary/",
+    SetPrimaryListingImageAPIView.as_view(),
+    name="listing_image_set_primary",
+),
 
     path("<int:listing_id>/report/", ListingReportCreateAPIView.as_view(), name="listing_report"),
 ]

@@ -260,9 +260,11 @@ class ListingImageUploadAPIView(APIView):
         serializer = ListingImageSerializer(data=request.data)
 
         if serializer.is_valid():
+
+            is_first_image = not listing.images.exists()
             image = serializer.save(
                 listing=listing,
-                sort_order=image_count,
+                is_primary=is_first_image,
             )
 
             if listing.images.count() == 1:
@@ -277,6 +279,8 @@ class ListingImageUploadAPIView(APIView):
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 
+
+
 class ListingImageDeleteAPIView(APIView):
     permission_classes = [
         permissions.IsAuthenticated,
@@ -286,21 +290,25 @@ class ListingImageDeleteAPIView(APIView):
 
     def delete(self, request, pk, image_id):
         try:
-            image = ListingImage.objects.select_related("listing").get(
-                pk=image_id,
-                listing_id=pk,
-                listing__seller=request.user,
+            listing = Listing.objects.get(
+                pk=pk,
+                seller=request.user,
             )
+        except Listing.DoesNotExist:
+            return Response(
+                {"detail": "Listing not found."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        try:
+            image = listing.images.get(pk=image_id)
         except ListingImage.DoesNotExist:
             return Response(
-                {
-                    "detail": "Image not found."
-                },
+                {"detail": "Image not found."},
                 status=status.HTTP_404_NOT_FOUND,
             )
 
         was_primary = image.is_primary
-        listing = image.listing
 
         image.delete()
 
@@ -312,8 +320,49 @@ class ListingImageDeleteAPIView(APIView):
                 next_image.save(update_fields=["is_primary"])
 
         return Response(
+            {"message": "Image deleted successfully."},
+            status=status.HTTP_200_OK,
+        )
+
+
+
+
+class SetPrimaryListingImageAPIView(APIView):
+    permission_classes = [
+        permissions.IsAuthenticated,
+        IsNotBanned,
+        IsVerifiedUser,
+    ]
+
+    def post(self, request, pk, image_id):
+        try:
+            listing = Listing.objects.get(
+                pk=pk,
+                seller=request.user,
+            )
+        except Listing.DoesNotExist:
+            return Response(
+                {"detail": "Listing not found."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        try:
+            image = listing.images.get(pk=image_id)
+        except ListingImage.DoesNotExist:
+            return Response(
+                {"detail": "Image not found."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        listing.images.update(is_primary=False)
+
+        image.is_primary = True
+        image.save(update_fields=["is_primary"])
+
+        return Response(
             {
-                "message": "Image deleted successfully."
+                "message": "Primary image updated successfully.",
+                "image_id": image.id,
             },
             status=status.HTTP_200_OK,
         )
