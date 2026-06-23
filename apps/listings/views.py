@@ -9,6 +9,8 @@ from rest_framework.views import APIView
 from .models import Listing, ListingImage
 from .permissions import IsListingOwnerOrReadOnly
 
+from decimal import Decimal, InvalidOperation
+
 from .serializers import (
     ListingListSerializer,
     ListingDetailSerializer,
@@ -20,7 +22,6 @@ from .serializers import (
 from apps.common.permissions import IsNotBanned, IsVerifiedUser
 from datetime import timedelta
 from django.utils import timezone
-
 
 class ListingListCreateAPIView(generics.ListCreateAPIView):
     filterset_class = ListingFilter
@@ -51,7 +52,7 @@ class ListingListCreateAPIView(generics.ListCreateAPIView):
                 "city",
                 "city__region",
             )
-            .prefetch_related("images")
+            .prefetch_related("images", "attributes")
             .exclude(status=Listing.STATUS_DELETED)
             .order_by("-is_featured", "-created_at")
         )
@@ -62,35 +63,104 @@ class ListingListCreateAPIView(generics.ListCreateAPIView):
 
         return queryset.filter(status=Listing.STATUS_ACTIVE)
 
-    def perform_create(self, serializer):
+    def create(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
         listing = serializer.save()
 
         base_slug = slugify(listing.title)
         listing.slug = f"{base_slug}-{listing.id}"
         listing.save(update_fields=["slug"])
-        
+
+        response_serializer = ListingDetailSerializer(
+            listing,
+            context={"request": request},
+        )
+
+        return Response(
+            response_serializer.data,
+            status=status.HTTP_201_CREATED,
+        )
 
     def filter_queryset(self, queryset):
         queryset = super().filter_queryset(queryset)
 
+        reserved_params = {
+            "page",
+            "page_size",
+            "q",
+            "category",
+            "city",
+            "region",
+            "min_price",
+            "max_price",
+            "condition",
+            "status",
+            "seller",
+            "sort",
+            "mine",
+        }
+
+        for key, value in self.request.query_params.items():
+            if key in reserved_params:
+                continue
+
+            if value is None or value == "":
+                continue
+
+            queryset = self.filter_by_attribute(queryset, key, value)
+
         sort = self.request.query_params.get("sort")
 
         if sort == "newest":
-            return queryset.order_by("-created_at")
+            return queryset.order_by("-created_at").distinct()
 
         if sort == "oldest":
-            return queryset.order_by("created_at")
+            return queryset.order_by("created_at").distinct()
 
         if sort == "price_low":
-            return queryset.order_by("price")
+            return queryset.order_by("price").distinct()
 
         if sort == "price_high":
-            return queryset.order_by("-price")
+            return queryset.order_by("-price").distinct()
 
         if sort == "popular":
-            return queryset.order_by("-views_count", "-created_at")
+            return queryset.order_by("-views_count", "-created_at").distinct()
 
-        return queryset.order_by("-created_at")
+        return queryset.order_by("-created_at").distinct()
+
+    def filter_by_attribute(self, queryset, key, value):
+        value_text = str(value).strip()
+        value_lower = value_text.lower()
+
+        # Boolean filters: furnished=true / furnished=false
+        if value_lower in ["true", "false"]:
+            return queryset.filter(
+                attributes__category_filter__key=key,
+                attributes__value_boolean=(value_lower == "true"),
+            )
+
+        # Number filters: year=2012 / bedrooms=2 / mileage=85000
+        try:
+            number_value = Decimal(value_text)
+
+            number_queryset = queryset.filter(
+                attributes__category_filter__key=key,
+                attributes__value_number=number_value,
+            )
+
+            if number_queryset.exists():
+                return number_queryset
+
+        except (InvalidOperation, ValueError):
+            pass
+
+        # Text/select filters: brand=Toyota / storage=256GB / ram=16GB
+        return queryset.filter(
+            attributes__category_filter__key=key,
+            attributes__value_text__iexact=value_text,
+        )
 
 
 class ListingDetailAPIView(generics.RetrieveUpdateDestroyAPIView):

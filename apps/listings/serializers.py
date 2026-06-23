@@ -1,8 +1,11 @@
-from rest_framework import serializers
-from .models import Listing, ListingImage, ListingAttribute
 from datetime import timedelta
+
 from django.utils import timezone
 from PIL import Image
+from rest_framework import serializers
+
+from .models import Listing, ListingImage, ListingAttribute
+
 
 class ListingImageSerializer(serializers.ModelSerializer):
     image_url = serializers.SerializerMethodField()
@@ -83,15 +86,28 @@ class ListingImageSerializer(serializers.ModelSerializer):
 
 
 class ListingAttributeSerializer(serializers.ModelSerializer):
-    filter_name = serializers.CharField(source="category_filter.name", read_only=True)
-    filter_key = serializers.CharField(source="category_filter.key", read_only=True)
-    filter_type = serializers.CharField(source="category_filter.filter_type", read_only=True)
+    category_filter_id = serializers.IntegerField(
+        source="category_filter.id",
+        read_only=True,
+    )
+    filter_name = serializers.CharField(
+        source="category_filter.name",
+        read_only=True,
+    )
+    filter_key = serializers.CharField(
+        source="category_filter.key",
+        read_only=True,
+    )
+    filter_type = serializers.CharField(
+        source="category_filter.filter_type",
+        read_only=True,
+    )
 
     class Meta:
         model = ListingAttribute
         fields = [
             "id",
-            "category_filter",
+            "category_filter_id",
             "filter_name",
             "filter_key",
             "filter_type",
@@ -102,6 +118,7 @@ class ListingAttributeSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = [
             "id",
+            "category_filter_id",
             "filter_name",
             "filter_key",
             "filter_type",
@@ -110,22 +127,37 @@ class ListingAttributeSerializer(serializers.ModelSerializer):
 
 
 class ListingAttributeInputSerializer(serializers.Serializer):
-    category_filter = serializers.IntegerField()
-    value_text = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+    category_filter_id = serializers.IntegerField()
+    value_text = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        allow_null=True,
+    )
     value_number = serializers.DecimalField(
         max_digits=12,
         decimal_places=2,
         required=False,
         allow_null=True,
     )
-    value_boolean = serializers.BooleanField(required=False, allow_null=True)
-
+    value_boolean = serializers.BooleanField(
+        required=False,
+        allow_null=True,
+    )
 
 
 class ListingListSerializer(serializers.ModelSerializer):
-    seller_name = serializers.CharField(source="seller.full_name", read_only=True)
-    category_name = serializers.CharField(source="category.name", read_only=True)
-    city_name = serializers.CharField(source="city.name", read_only=True)
+    seller_name = serializers.CharField(
+        source="seller.full_name",
+        read_only=True,
+    )
+    category_name = serializers.CharField(
+        source="category.name",
+        read_only=True,
+    )
+    city_name = serializers.CharField(
+        source="city.name",
+        read_only=True,
+    )
     primary_image = serializers.SerializerMethodField()
 
     class Meta:
@@ -164,23 +196,34 @@ class ListingListSerializer(serializers.ModelSerializer):
     def get_primary_image(self, obj):
         image = obj.images.filter(is_primary=True).first() or obj.images.first()
 
-        if image and image.image:
-            request = self.context.get("request")
-            image_url = image.image.url
+        if not image or not image.image:
+            return None
 
-            if request:
-                return request.build_absolute_uri(image_url)
+        request = self.context.get("request")
 
-            return image_url
+        if request:
+            return request.build_absolute_uri(image.image.url)
 
-        return None
+        return image.image.url
 
 
 class ListingDetailSerializer(serializers.ModelSerializer):
-    seller_name = serializers.CharField(source="seller.full_name", read_only=True)
-    seller_phone = serializers.CharField(source="seller.phone", read_only=True)
-    category_name = serializers.CharField(source="category.name", read_only=True)
-    city_name = serializers.CharField(source="city.name", read_only=True)
+    seller_name = serializers.CharField(
+        source="seller.full_name",
+        read_only=True,
+    )
+    seller_phone = serializers.CharField(
+        source="seller.phone",
+        read_only=True,
+    )
+    category_name = serializers.CharField(
+        source="category.name",
+        read_only=True,
+    )
+    city_name = serializers.CharField(
+        source="city.name",
+        read_only=True,
+    )
 
     images = ListingImageSerializer(many=True, read_only=True)
     attributes = ListingAttributeSerializer(many=True, read_only=True)
@@ -214,7 +257,6 @@ class ListingDetailSerializer(serializers.ModelSerializer):
             "attributes",
             "created_at",
             "updated_at",
-
         ]
         read_only_fields = [
             "id",
@@ -231,11 +273,12 @@ class ListingDetailSerializer(serializers.ModelSerializer):
 
 
 class ListingCreateUpdateSerializer(serializers.ModelSerializer):
-
     attributes = ListingAttributeInputSerializer(
-    many=True,
-    required=False,
-)
+        many=True,
+        required=False,
+        write_only=True,
+    )
+
     class Meta:
         model = Listing
         fields = [
@@ -250,21 +293,19 @@ class ListingCreateUpdateSerializer(serializers.ModelSerializer):
             "is_negotiable",
             "attributes",
         ]
-
         read_only_fields = [
             "id",
         ]
 
     def validate_price(self, value):
         if value <= 0:
-            raise serializers.ValidationError("Price must be greater than zero.")
+            raise serializers.ValidationError(
+                "Price must be greater than zero."
+            )
 
         return value
 
     def create(self, validated_data):
-        from datetime import timedelta
-        from django.utils import timezone
-
         attributes_data = validated_data.pop("attributes", [])
         request = self.context["request"]
 
@@ -278,7 +319,6 @@ class ListingCreateUpdateSerializer(serializers.ModelSerializer):
         self._save_attributes(listing, attributes_data)
 
         return listing
-    
 
     def update(self, instance, validated_data):
         attributes_data = validated_data.pop("attributes", None)
@@ -295,12 +335,12 @@ class ListingCreateUpdateSerializer(serializers.ModelSerializer):
             self._save_attributes(instance, attributes_data)
 
         return instance
-    
+
     def _save_attributes(self, listing, attributes_data):
         from apps.categories.models import CategoryFilter
 
         for item in attributes_data:
-            category_filter_id = item.get("category_filter")
+            category_filter_id = item.get("category_filter_id")
 
             try:
                 category_filter = CategoryFilter.objects.get(
