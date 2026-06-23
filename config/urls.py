@@ -33,6 +33,7 @@ urlpatterns = [
     path("api/v1/notifications/", include("apps.notifications.urls")),
     path("api/v1/moderation/", include("apps.moderation.urls")),
     path("api/v1/admin-panel/", include("apps.adminpanel.urls")),
+    path("api/v1/seller/", include("apps.seller.urls")),
 ]
 
 

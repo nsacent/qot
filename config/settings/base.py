@@ -58,6 +58,7 @@ INSTALLED_APPS = [
     "apps.notifications.apps.NotificationsConfig",
     "apps.moderation.apps.ModerationConfig",
     "apps.adminpanel.apps.AdminPanelConfig",
+    "apps.seller.apps.SellerConfig",
 ]
 
 
