@@ -34,6 +34,7 @@ urlpatterns = [
     path("api/v1/moderation/", include("apps.moderation.urls")),
     path("api/v1/admin-panel/", include("apps.adminpanel.urls")),
     path("api/v1/seller/", include("apps.seller.urls")),
+    path("api/v1/sellers/", include("apps.sellers.urls")),
 ]
 
 
