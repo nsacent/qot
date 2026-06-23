@@ -4,7 +4,6 @@ from datetime import timedelta
 from django.utils import timezone
 from PIL import Image
 
-
 class ListingImageSerializer(serializers.ModelSerializer):
     image_url = serializers.SerializerMethodField()
 
@@ -84,18 +83,9 @@ class ListingImageSerializer(serializers.ModelSerializer):
 
 
 class ListingAttributeSerializer(serializers.ModelSerializer):
-    filter_name = serializers.CharField(
-        source="category_filter.name",
-        read_only=True,
-    )
-    filter_key = serializers.CharField(
-        source="category_filter.key",
-        read_only=True,
-    )
-    filter_type = serializers.CharField(
-        source="category_filter.filter_type",
-        read_only=True,
-    )
+    filter_name = serializers.CharField(source="category_filter.name", read_only=True)
+    filter_key = serializers.CharField(source="category_filter.key", read_only=True)
+    filter_type = serializers.CharField(source="category_filter.filter_type", read_only=True)
 
     class Meta:
         model = ListingAttribute
@@ -108,7 +98,28 @@ class ListingAttributeSerializer(serializers.ModelSerializer):
             "value_text",
             "value_number",
             "value_boolean",
+            "created_at",
         ]
+        read_only_fields = [
+            "id",
+            "filter_name",
+            "filter_key",
+            "filter_type",
+            "created_at",
+        ]
+
+
+class ListingAttributeInputSerializer(serializers.Serializer):
+    category_filter = serializers.IntegerField()
+    value_text = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+    value_number = serializers.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        required=False,
+        allow_null=True,
+    )
+    value_boolean = serializers.BooleanField(required=False, allow_null=True)
+
 
 
 class ListingListSerializer(serializers.ModelSerializer):
@@ -203,6 +214,7 @@ class ListingDetailSerializer(serializers.ModelSerializer):
             "attributes",
             "created_at",
             "updated_at",
+
         ]
         read_only_fields = [
             "id",
@@ -219,6 +231,11 @@ class ListingDetailSerializer(serializers.ModelSerializer):
 
 
 class ListingCreateUpdateSerializer(serializers.ModelSerializer):
+
+    attributes = ListingAttributeInputSerializer(
+    many=True,
+    required=False,
+)
     class Meta:
         model = Listing
         fields = [
@@ -231,7 +248,9 @@ class ListingCreateUpdateSerializer(serializers.ModelSerializer):
             "currency",
             "condition",
             "is_negotiable",
+            "attributes",
         ]
+
         read_only_fields = [
             "id",
         ]
@@ -243,11 +262,98 @@ class ListingCreateUpdateSerializer(serializers.ModelSerializer):
         return value
 
     def create(self, validated_data):
+        from datetime import timedelta
+        from django.utils import timezone
+
+        attributes_data = validated_data.pop("attributes", [])
         request = self.context["request"]
 
-        return Listing.objects.create(
+        listing = Listing.objects.create(
             seller=request.user,
             status=Listing.STATUS_PENDING,
             expires_at=timezone.now() + timedelta(days=30),
             **validated_data,
         )
+
+        self._save_attributes(listing, attributes_data)
+
+        return listing
+    
+
+    def update(self, instance, validated_data):
+        attributes_data = validated_data.pop("attributes", None)
+
+        for attr, value in validated_data.items():
+            setattr(instance, attr, value)
+
+        instance.status = Listing.STATUS_PENDING
+        instance.rejection_reason = ""
+        instance.save()
+
+        if attributes_data is not None:
+            instance.attributes.all().delete()
+            self._save_attributes(instance, attributes_data)
+
+        return instance
+    
+    def _save_attributes(self, listing, attributes_data):
+        from apps.categories.models import CategoryFilter
+
+        for item in attributes_data:
+            category_filter_id = item.get("category_filter")
+
+            try:
+                category_filter = CategoryFilter.objects.get(
+                    id=category_filter_id,
+                    category=listing.category,
+                )
+            except CategoryFilter.DoesNotExist:
+                raise serializers.ValidationError(
+                    {
+                        "attributes": [
+                            f"Invalid category filter ID: {category_filter_id}"
+                        ]
+                    }
+                )
+
+            value_text = item.get("value_text")
+            value_number = item.get("value_number")
+            value_boolean = item.get("value_boolean")
+
+            if category_filter.filter_type in ["text", "select", "multi_select"]:
+                if not value_text:
+                    raise serializers.ValidationError(
+                        {
+                            "attributes": [
+                                f"{category_filter.name} requires a text value."
+                            ]
+                        }
+                    )
+
+            if category_filter.filter_type == "number":
+                if value_number is None:
+                    raise serializers.ValidationError(
+                        {
+                            "attributes": [
+                                f"{category_filter.name} requires a number value."
+                            ]
+                        }
+                    )
+
+            if category_filter.filter_type == "boolean":
+                if value_boolean is None:
+                    raise serializers.ValidationError(
+                        {
+                            "attributes": [
+                                f"{category_filter.name} requires a true or false value."
+                            ]
+                        }
+                    )
+
+            ListingAttribute.objects.create(
+                listing=listing,
+                category_filter=category_filter,
+                value_text=value_text,
+                value_number=value_number,
+                value_boolean=value_boolean,
+            )
