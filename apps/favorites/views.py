@@ -10,7 +10,6 @@ from apps.listings.models import Listing
 from .models import Favorite
 from .serializers import FavoriteSerializer
 
-
 from apps.common.permissions import IsNotBanned, IsVerifiedUser
 
 class FavoriteListAPIView(generics.ListAPIView):
@@ -39,7 +38,6 @@ class FavoriteToggleAPIView(APIView):
         IsVerifiedUser,
     ]
 
-    @transaction.atomic
     def post(self, request, listing_id):
         try:
             listing = Listing.objects.get(
@@ -48,9 +46,7 @@ class FavoriteToggleAPIView(APIView):
             )
         except Listing.DoesNotExist:
             return Response(
-                {
-                    "detail": "Active listing not found."
-                },
+                {"detail": "Listing not found."},
                 status=status.HTTP_404_NOT_FOUND,
             )
 
@@ -59,50 +55,69 @@ class FavoriteToggleAPIView(APIView):
             listing=listing,
         )
 
-        if not created:
+        if created:
+            Listing.objects.filter(pk=listing.pk).update(
+                favorites_count=F("favorites_count") + 1
+            )
+
+            listing.refresh_from_db(fields=["favorites_count"])
+
             return Response(
                 {
-                    "message": "Listing is already saved."
+                    "message": "Listing added to favorites.",
+                    "is_favorited": True,
+                    "favorites_count": listing.favorites_count,
+                },
+                status=status.HTTP_201_CREATED,
+            )
+
+        return Response(
+            {
+                "message": "Listing is already in favorites.",
+                "is_favorited": True,
+                "favorites_count": listing.favorites_count,
+            },
+            status=status.HTTP_200_OK,
+        )
+
+    def delete(self, request, listing_id):
+        try:
+            listing = Listing.objects.get(pk=listing_id)
+        except Listing.DoesNotExist:
+            return Response(
+                {"detail": "Listing not found."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        deleted_count, _ = Favorite.objects.filter(
+            user=request.user,
+            listing=listing,
+        ).delete()
+
+        if deleted_count:
+            Listing.objects.filter(
+                pk=listing.pk,
+                favorites_count__gt=0,
+            ).update(
+                favorites_count=F("favorites_count") - 1
+            )
+
+            listing.refresh_from_db(fields=["favorites_count"])
+
+            return Response(
+                {
+                    "message": "Listing removed from favorites.",
+                    "is_favorited": False,
+                    "favorites_count": listing.favorites_count,
                 },
                 status=status.HTTP_200_OK,
             )
 
-        Listing.objects.filter(pk=listing.pk).update(
-            favorites_count=F("favorites_count") + 1
-        )
-
         return Response(
             {
-                "message": "Listing saved successfully."
-            },
-            status=status.HTTP_201_CREATED,
-        )
-
-    @transaction.atomic
-    def delete(self, request, listing_id):
-        deleted_count, _ = Favorite.objects.filter(
-            user=request.user,
-            listing_id=listing_id,
-        ).delete()
-
-        if deleted_count == 0:
-            return Response(
-                {
-                    "detail": "Saved listing not found."
-                },
-                status=status.HTTP_404_NOT_FOUND,
-            )
-
-        Listing.objects.filter(
-            pk=listing_id,
-            favorites_count__gt=0,
-        ).update(
-            favorites_count=F("favorites_count") - 1
-        )
-
-        return Response(
-            {
-                "message": "Listing removed from saved ads."
+                "message": "Listing was not in favorites.",
+                "is_favorited": False,
+                "favorites_count": listing.favorites_count,
             },
             status=status.HTTP_200_OK,
         )
