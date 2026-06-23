@@ -44,9 +44,16 @@ class ListingListCreateAPIView(generics.ListCreateAPIView):
     def get_queryset(self):
         queryset = (
             Listing.objects
-            .select_related("seller", "category", "city")
+            .select_related(
+                "seller",
+                "category",
+                "category__parent",
+                "city",
+                "city__region",
+            )
             .prefetch_related("images")
             .exclude(status=Listing.STATUS_DELETED)
+            .order_by("-is_featured", "-created_at")
         )
 
         if self.request.user.is_authenticated:
