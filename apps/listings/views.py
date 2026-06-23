@@ -225,7 +225,6 @@ class RenewListingAPIView(APIView):
             status=status.HTTP_200_OK,
         )
 
-
 class ListingImageUploadAPIView(APIView):
     permission_classes = [
         permissions.IsAuthenticated,
@@ -241,42 +240,41 @@ class ListingImageUploadAPIView(APIView):
             )
         except Listing.DoesNotExist:
             return Response(
-                {
-                    "detail": "Listing not found."
-                },
+                {"detail": "Listing not found."},
                 status=status.HTTP_404_NOT_FOUND,
             )
 
-        image_count = listing.images.count()
+        current_images_count = listing.images.count()
 
-        if image_count >= 10:
+        if current_images_count >= 10:
             return Response(
-                {
-                    "detail": "A listing cannot have more than 10 images."
-                },
+                {"detail": "A listing can have a maximum of 10 images."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        serializer = ListingImageSerializer(data=request.data)
+        serializer = ListingImageSerializer(
+            data=request.data,
+            context={"request": request},
+        )
+        serializer.is_valid(raise_exception=True)
 
-        if serializer.is_valid():
+        is_first_image = current_images_count == 0
 
-            is_first_image = not listing.images.exists()
-            image = serializer.save(
-                listing=listing,
-                is_primary=is_first_image,
-            )
+        image = serializer.save(
+            listing=listing,
+            is_primary=is_first_image,
+        )
 
-            if listing.images.count() == 1:
-                image.is_primary = True
-                image.save(update_fields=["is_primary"])
+        response_serializer = ListingImageSerializer(
+            image,
+            context={"request": request},
+        )
 
-            return Response(
-                ListingImageSerializer(image, context={"request": request}).data,
-                status=status.HTTP_201_CREATED,
-            )
+        return Response(
+            response_serializer.data,
+            status=status.HTTP_201_CREATED,
+        )
 
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 
 

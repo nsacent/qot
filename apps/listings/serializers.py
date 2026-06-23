@@ -2,22 +2,85 @@ from rest_framework import serializers
 from .models import Listing, ListingImage, ListingAttribute
 from datetime import timedelta
 from django.utils import timezone
+from PIL import Image
 
 
 class ListingImageSerializer(serializers.ModelSerializer):
+    image_url = serializers.SerializerMethodField()
+
     class Meta:
         model = ListingImage
         fields = [
             "id",
             "image",
+            "image_url",
             "is_primary",
             "sort_order",
             "created_at",
         ]
         read_only_fields = [
             "id",
+            "image_url",
+            "is_primary",
             "created_at",
         ]
+
+    def get_image_url(self, obj):
+        if not obj.image:
+            return None
+
+        request = self.context.get("request")
+
+        if request:
+            return request.build_absolute_uri(obj.image.url)
+
+        return obj.image.url
+
+    def validate_image(self, image):
+        max_size = 5 * 1024 * 1024
+
+        if image.size > max_size:
+            raise serializers.ValidationError(
+                "Image size must not exceed 5MB."
+            )
+
+        allowed_extensions = ["jpg", "jpeg", "png", "webp"]
+        allowed_formats = ["JPEG", "PNG", "WEBP"]
+
+        extension = image.name.split(".")[-1].lower()
+
+        if extension not in allowed_extensions:
+            raise serializers.ValidationError(
+                "Only JPG, JPEG, PNG, and WEBP images are allowed."
+            )
+
+        try:
+            img = Image.open(image)
+            img.verify()
+        except Exception:
+            raise serializers.ValidationError(
+                "Uploaded file is not a valid image."
+            )
+
+        image.seek(0)
+
+        try:
+            img = Image.open(image)
+
+            if img.format not in allowed_formats:
+                raise serializers.ValidationError(
+                    "Only JPG, JPEG, PNG, and WEBP images are allowed."
+                )
+        except serializers.ValidationError:
+            raise
+        except Exception:
+            raise serializers.ValidationError(
+                "Uploaded file is not a valid image."
+            )
+
+        image.seek(0)
+
+        return image
 
 
 class ListingAttributeSerializer(serializers.ModelSerializer):
