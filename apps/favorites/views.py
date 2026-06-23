@@ -10,8 +10,8 @@ from apps.listings.models import Listing
 from .models import Favorite
 from .serializers import FavoriteSerializer
 
-from apps.common.permissions import IsNotBanned
 
+from apps.common.permissions import IsNotBanned, IsVerifiedUser
 
 class FavoriteListAPIView(generics.ListAPIView):
     serializer_class = FavoriteSerializer
@@ -33,7 +33,11 @@ class FavoriteListAPIView(generics.ListAPIView):
 
 
 class FavoriteToggleAPIView(APIView):
-    permission_classes = [permissions.IsAuthenticated, IsNotBanned]
+    permission_classes = [
+        permissions.IsAuthenticated,
+        IsNotBanned,
+        IsVerifiedUser,
+    ]
 
     @transaction.atomic
     def post(self, request, listing_id):

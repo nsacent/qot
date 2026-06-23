@@ -17,8 +17,7 @@ from .serializers import (
 
 )
 
-from apps.common.permissions import IsNotBanned
-
+from apps.common.permissions import IsNotBanned, IsVerifiedUser
 from datetime import timedelta
 from django.utils import timezone
 
@@ -28,7 +27,11 @@ class ListingListCreateAPIView(generics.ListCreateAPIView):
 
     def get_permissions(self):
         if self.request.method == "POST":
-            return [permissions.IsAuthenticated(), IsNotBanned()]
+            return [
+                permissions.IsAuthenticated(),
+                IsNotBanned(),
+                IsVerifiedUser(),
+            ]
 
         return [permissions.AllowAny()]
 
@@ -91,6 +94,7 @@ class ListingDetailAPIView(generics.RetrieveUpdateDestroyAPIView):
         return [
             permissions.IsAuthenticated(),
             IsNotBanned(),
+            IsVerifiedUser(),
             IsListingOwnerOrReadOnly(),
         ]
 
@@ -128,6 +132,7 @@ class MarkListingSoldAPIView(APIView):
     permission_classes = [
         permissions.IsAuthenticated,
         IsNotBanned,
+        IsVerifiedUser,
     ]
 
     def post(self, request, pk):
@@ -163,6 +168,7 @@ class RenewListingAPIView(APIView):
     permission_classes = [
         permissions.IsAuthenticated,
         IsNotBanned,
+        IsVerifiedUser,
     ]
 
     def post(self, request, pk):
@@ -202,6 +208,7 @@ class ListingImageUploadAPIView(APIView):
     permission_classes = [
         permissions.IsAuthenticated,
         IsNotBanned,
+        IsVerifiedUser,
     ]
 
     def post(self, request, pk):
@@ -252,6 +259,7 @@ class ListingImageDeleteAPIView(APIView):
     permission_classes = [
         permissions.IsAuthenticated,
         IsNotBanned,
+        IsVerifiedUser,
     ]
 
     def delete(self, request, pk, image_id):

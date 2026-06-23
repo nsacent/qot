@@ -16,13 +16,18 @@ from .serializers import (
 )
 
 from apps.notifications.services import create_message_notification
-from apps.common.permissions import IsNotBanned
 
+
+from apps.common.permissions import IsNotBanned, IsVerifiedUser
 
 class ChatThreadListCreateAPIView(generics.ListCreateAPIView):
     def get_permissions(self):
         if self.request.method == "POST":
-            return [permissions.IsAuthenticated(), IsNotBanned()]
+            return [
+                permissions.IsAuthenticated(),
+                IsNotBanned(),
+                IsVerifiedUser(),
+            ]
 
         return [permissions.IsAuthenticated()]
 
@@ -109,7 +114,17 @@ class ChatThreadDetailAPIView(generics.RetrieveAPIView):
 
 
 class ChatMessageListCreateAPIView(generics.ListCreateAPIView):
-    permission_classes = [permissions.IsAuthenticated]
+
+    def get_permissions(self):
+        if self.request.method == "POST":
+            return [
+                permissions.IsAuthenticated(),
+                IsNotBanned(),
+                IsVerifiedUser(),
+            ]
+
+        return [permissions.IsAuthenticated()]
+    #permission_classes = [permissions.IsAuthenticated]
 
     def get_serializer_class(self):
         if self.request.method == "POST":

@@ -7,10 +7,14 @@ class NotificationConsumer(AsyncWebsocketConsumer):
     async def connect(self):
         self.user = self.scope["user"]
 
-        if not self.user.is_authenticated or self.user.is_banned:
+        if (
+            not self.user.is_authenticated
+            or self.user.is_banned
+            or not self.user.is_verified
+        ):
             await self.close()
             return
-
+        
         self.group_name = f"user_notifications_{self.user.id}"
 
         await self.channel_layer.group_add(

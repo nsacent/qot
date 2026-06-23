@@ -14,11 +14,14 @@ from .serializers import (
     ListingReportResolveSerializer,
 )
 
-from apps.common.permissions import IsNotBanned
-
+from apps.common.permissions import IsNotBanned, IsVerifiedUser
 
 class ListingReportCreateAPIView(APIView):
-    permission_classes = [permissions.IsAuthenticated, IsNotBanned]
+    permission_classes = [
+        permissions.IsAuthenticated,
+        IsNotBanned,
+        IsVerifiedUser,
+    ]
 
     def post(self, request, listing_id):
         try:
