@@ -60,6 +60,7 @@ INSTALLED_APPS = [
     "apps.adminpanel.apps.AdminPanelConfig",
     "apps.seller.apps.SellerConfig",
     "apps.sellers.apps.SellersConfig",
+    "apps.home.apps.HomeConfig",
 ]
 
 
