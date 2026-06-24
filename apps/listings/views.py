@@ -1,4 +1,4 @@
-from django.db.models import F
+from django.db.models import F,Q
 from django.utils.text import slugify
 from .filters import ListingFilter
 
@@ -62,7 +62,11 @@ class ListingListCreateAPIView(generics.ListCreateAPIView):
             if self.request.query_params.get("mine") == "true":
                 return queryset.filter(seller=self.request.user)
 
-        return queryset.filter(status=Listing.STATUS_ACTIVE)
+        return queryset.filter(
+            status=Listing.STATUS_ACTIVE,
+        ).filter(
+            Q(expires_at__isnull=True) | Q(expires_at__gt=timezone.now())
+        )
 
     def create(self, request, *args, **kwargs):
         serializer = self.get_serializer(data=request.data)
@@ -417,35 +421,52 @@ class RenewListingAPIView(APIView):
 
     def post(self, request, pk):
         try:
-            listing = Listing.objects.get(pk=pk, seller=request.user)
+            listing = Listing.objects.get(
+                pk=pk,
+                seller=request.user,
+            )
         except Listing.DoesNotExist:
             return Response(
                 {"detail": "Listing not found."},
                 status=status.HTTP_404_NOT_FOUND,
             )
 
-        if listing.status not in [
-            Listing.STATUS_ACTIVE,
-            Listing.STATUS_EXPIRED,
-        ]:
+        if listing.status == Listing.STATUS_DELETED:
             return Response(
-                {
-                    "detail": "Only active or expired listings can be renewed."
-                },
+                {"detail": "Deleted listings cannot be renewed."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if listing.status == Listing.STATUS_REJECTED:
+            return Response(
+                {"detail": "Rejected listings must be edited and resubmitted for approval."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
         listing.status = Listing.STATUS_ACTIVE
         listing.expires_at = timezone.now() + timedelta(days=30)
-        listing.save(update_fields=["status", "expires_at", "updated_at"])
+        listing.sold_at = None
+
+        listing.save(
+            update_fields=[
+                "status",
+                "expires_at",
+                "sold_at",
+                "updated_at",
+            ]
+        )
 
         return Response(
             {
                 "message": "Listing renewed successfully.",
+                "listing_id": listing.id,
+                "status": listing.status,
                 "expires_at": listing.expires_at,
             },
             status=status.HTTP_200_OK,
         )
+
+
 
 class ListingImageUploadAPIView(APIView):
     permission_classes = [

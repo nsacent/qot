@@ -16,7 +16,16 @@ class HomeAPIView(APIView):
     def get_base_queryset(self):
         return (
             Listing.objects
-            .filter(status=Listing.STATUS_ACTIVE)
+            .filter(
+                Q(children__listings__status=Listing.STATUS_ACTIVE)
+                & (
+                    Q(children__listings__expires_at__isnull=True)
+                    | Q(children__listings__expires_at__gt=timezone.now())
+                )
+            )
+            .filter(
+                Q(expires_at__isnull=True) | Q(expires_at__gt=timezone.now())
+            )
             .select_related("seller", "category", "category__parent", "city", "city__region")
             .prefetch_related("images")
         )
@@ -51,7 +60,13 @@ class HomeAPIView(APIView):
             .annotate(
                 listings_count=Count(
                     "children__listings",
-                    filter=Q(children__listings__status=Listing.STATUS_ACTIVE),
+                    filter=(
+                        Q(children__listings__status=Listing.STATUS_ACTIVE)
+                        & (
+                            Q(children__listings__expires_at__isnull=True)
+                            | Q(children__listings__expires_at__gt=timezone.now())
+                        )
+                    ),
                 )
             )
             .order_by("-listings_count", "sort_order", "name")[:10]
