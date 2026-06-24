@@ -103,3 +103,29 @@ def create_listing_expired_notification(listing):
         message=f"Your listing '{listing.title}' has expired. You can renew it to make it active again.",
         listing=listing,
     )
+
+
+def create_payment_paid_notification(payment):
+    return create_notification(
+        user=payment.user,
+        notification_type=Notification.TYPE_SYSTEM,
+        title="Payment confirmed",
+        message=(
+            f"Your payment {payment.reference} of "
+            f"{payment.amount} {payment.currency} has been confirmed."
+        ),
+        listing=payment.listing,
+    )
+
+
+def create_payment_failed_notification(payment):
+    return create_notification(
+        user=payment.user,
+        notification_type=Notification.TYPE_SYSTEM,
+        title="Payment failed",
+        message=(
+            f"Your payment {payment.reference} was not successful. "
+            "Please try again or contact support."
+        ),
+        listing=payment.listing,
+    )

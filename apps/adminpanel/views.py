@@ -30,6 +30,8 @@ from .serializers import (
 from apps.notifications.services import (
     create_listing_approved_notification,
     create_listing_rejected_notification,
+    create_payment_paid_notification,
+    create_payment_failed_notification,
 )
 
 class AdminDashboardAPIView(APIView):
@@ -377,6 +379,8 @@ class AdminMarkPaymentPaidAPIView(APIView):
                 ]
             )
 
+        create_payment_paid_notification(payment)
+
         return Response(
             {
                 "message": "Payment marked as paid successfully.",
@@ -394,7 +398,10 @@ class AdminMarkPaymentFailedAPIView(APIView):
 
     def post(self, request, pk):
         try:
-            payment = Payment.objects.get(pk=pk)
+            payment = Payment.objects.select_related(
+                "user",
+                "listing",
+            ).get(pk=pk)
         except Payment.DoesNotExist:
             return Response(
                 {"detail": "Payment not found."},
@@ -407,6 +414,8 @@ class AdminMarkPaymentFailedAPIView(APIView):
         payment.status = Payment.STATUS_FAILED
         payment.notes = serializer.validated_data.get("notes", "")
         payment.save(update_fields=["status", "notes", "updated_at"])
+
+        create_payment_failed_notification(payment)
 
         return Response(
             {
