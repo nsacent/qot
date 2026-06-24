@@ -2,6 +2,8 @@ from django.utils import timezone
 from rest_framework import generics, permissions, status
 from rest_framework.response import Response
 from rest_framework.views import APIView
+from django.db.models import Q
+
 
 from apps.common.permissions import IsNotBanned, IsVerifiedUser
 from apps.listings.models import Listing
@@ -78,11 +80,34 @@ class AdminReportListAPIView(generics.ListAPIView):
     def get_queryset(self):
         queryset = (
             ListingReport.objects
-            .select_related("listing", "reporter", "resolved_by")
+            .select_related(
+                "listing",
+                "listing__seller",
+                "reporter",
+                "resolved_by",
+            )
             .order_by("-created_at")
         )
 
+        search = self.request.query_params.get("search")
+        reason = self.request.query_params.get("reason")
         is_resolved = self.request.query_params.get("is_resolved")
+        reporter = self.request.query_params.get("reporter")
+        listing = self.request.query_params.get("listing")
+        date_from = self.request.query_params.get("date_from")
+        date_to = self.request.query_params.get("date_to")
+
+        if search:
+            queryset = queryset.filter(
+                Q(listing__title__icontains=search)
+                | Q(listing__description__icontains=search)
+                | Q(reporter__full_name__icontains=search)
+                | Q(reporter__phone__icontains=search)
+                | Q(description__icontains=search)
+            )
+
+        if reason:
+            queryset = queryset.filter(reason=reason)
 
         if is_resolved == "true":
             queryset = queryset.filter(is_resolved=True)
@@ -90,8 +115,20 @@ class AdminReportListAPIView(generics.ListAPIView):
         if is_resolved == "false":
             queryset = queryset.filter(is_resolved=False)
 
-        return queryset
+        if reporter:
+            queryset = queryset.filter(reporter_id=reporter)
 
+        if listing:
+            queryset = queryset.filter(listing_id=listing)
+
+        if date_from:
+            queryset = queryset.filter(created_at__date__gte=date_from)
+
+        if date_to:
+            queryset = queryset.filter(created_at__date__lte=date_to)
+
+        return queryset.distinct()
+    
 
 class AdminReportDetailAPIView(generics.RetrieveAPIView):
     serializer_class = AdminListingReportSerializer
