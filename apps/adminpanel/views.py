@@ -26,6 +26,7 @@ from .serializers import (
     AdminMarkPaymentFailedSerializer,
     AdminPromotionPackageSerializer,
     AdminDashboardSerializer,
+    AdminCancelPaymentSerializer,
 )
 
 from apps.notifications.services import (
@@ -554,11 +555,27 @@ class AdminMarkPaymentPaidAPIView(APIView):
 
     def post(self, request, pk):
         try:
-            payment = Payment.objects.select_related("listing", "package").get(pk=pk)
+            payment = Payment.objects.select_related(
+                "listing",
+                "package",
+                "user",
+            ).get(pk=pk)
         except Payment.DoesNotExist:
             return Response(
                 {"detail": "Payment not found."},
                 status=status.HTTP_404_NOT_FOUND,
+            )
+
+        if payment.status == Payment.STATUS_PAID:
+            return Response(
+                {"detail": "This payment is already marked as paid."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if payment.status == Payment.STATUS_CANCELLED:
+            return Response(
+                {"detail": "Cancelled payments cannot be marked as paid."},
+                status=status.HTTP_400_BAD_REQUEST,
             )
 
         serializer = AdminMarkPaymentPaidSerializer(data=request.data)
@@ -585,15 +602,15 @@ class AdminMarkPaymentPaidAPIView(APIView):
             payment.purpose == Payment.PURPOSE_FEATURED_LISTING
             and payment.listing is not None
         ):
-            payment.listing.is_featured = True
-
             duration_days = 7
 
             if payment.package:
                 duration_days = payment.package.duration_days
 
-            payment.listing.featured_until = timezone.now() + timedelta(days=duration_days)
-
+            payment.listing.is_featured = True
+            payment.listing.featured_until = timezone.now() + timedelta(
+                days=duration_days,
+            )
             payment.listing.save(
                 update_fields=[
                     "is_featured",
@@ -611,6 +628,9 @@ class AdminMarkPaymentPaidAPIView(APIView):
             },
             status=status.HTTP_200_OK,
         )
+
+
+
 
 
 class AdminMarkPaymentFailedAPIView(APIView):
@@ -631,6 +651,18 @@ class AdminMarkPaymentFailedAPIView(APIView):
                 status=status.HTTP_404_NOT_FOUND,
             )
 
+        if payment.status == Payment.STATUS_PAID:
+            return Response(
+                {"detail": "Paid payments cannot be marked as failed."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if payment.status == Payment.STATUS_CANCELLED:
+            return Response(
+                {"detail": "Cancelled payments cannot be marked as failed."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
         serializer = AdminMarkPaymentFailedSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
@@ -647,6 +679,56 @@ class AdminMarkPaymentFailedAPIView(APIView):
             },
             status=status.HTTP_200_OK,
         )
+
+
+
+
+
+class AdminCancelPaymentAPIView(APIView):
+    permission_classes = [
+        permissions.IsAuthenticated,
+        IsAdminOrModerator,
+    ]
+
+    def post(self, request, pk):
+        try:
+            payment = Payment.objects.select_related(
+                "user",
+                "listing",
+            ).get(pk=pk)
+        except Payment.DoesNotExist:
+            return Response(
+                {"detail": "Payment not found."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        if payment.status == Payment.STATUS_PAID:
+            return Response(
+                {"detail": "Paid payments cannot be cancelled."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if payment.status == Payment.STATUS_CANCELLED:
+            return Response(
+                {"detail": "This payment is already cancelled."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        serializer = AdminCancelPaymentSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        payment.status = Payment.STATUS_CANCELLED
+        payment.notes = serializer.validated_data.get("notes", "")
+        payment.save(update_fields=["status", "notes", "updated_at"])
+
+        return Response(
+            {
+                "message": "Payment cancelled successfully.",
+                "payment": AdminPaymentSerializer(payment).data,
+            },
+            status=status.HTTP_200_OK,
+        ) 
+    
     
 
 class AdminPromotionPackageListCreateAPIView(generics.ListCreateAPIView):

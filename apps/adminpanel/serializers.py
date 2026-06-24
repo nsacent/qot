@@ -184,3 +184,10 @@ class AdminDashboardSerializer(serializers.Serializer):
     today_paid_payments = serializers.IntegerField()
     this_week_paid_payments = serializers.IntegerField()
     this_month_paid_payments = serializers.IntegerField()
+
+
+class AdminCancelPaymentSerializer(serializers.Serializer):
+    notes = serializers.CharField(
+        required=False,
+        allow_blank=True,
+    )
