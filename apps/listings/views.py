@@ -23,6 +23,7 @@ from apps.common.permissions import IsNotBanned, IsVerifiedUser
 from datetime import timedelta
 from django.utils import timezone
 
+
 class ListingListCreateAPIView(generics.ListCreateAPIView):
     filterset_class = ListingFilter
 
@@ -229,28 +230,179 @@ class MarkListingSoldAPIView(APIView):
 
     def post(self, request, pk):
         try:
-            listing = Listing.objects.get(pk=pk, seller=request.user)
+            listing = Listing.objects.get(
+                pk=pk,
+                seller=request.user,
+            )
         except Listing.DoesNotExist:
             return Response(
-                {
-                    "detail": "Listing not found."
-                },
+                {"detail": "Listing not found."},
                 status=status.HTTP_404_NOT_FOUND,
             )
 
-        if listing.status == Listing.STATUS_SOLD:
+        if listing.status == Listing.STATUS_DELETED:
             return Response(
-                {
-                    "detail": "Listing is already marked as sold."
-                },
+                {"detail": "Deleted listings cannot be marked as sold."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        listing.mark_sold()
+        listing.status = Listing.STATUS_SOLD
+        listing.sold_at = timezone.now()
+        listing.save(update_fields=["status", "sold_at", "updated_at"])
 
         return Response(
             {
-                "message": "Listing marked as sold successfully."
+                "message": "Listing marked as sold successfully.",
+                "listing_id": listing.id,
+                "status": listing.status,
+                "sold_at": listing.sold_at,
+            },
+            status=status.HTTP_200_OK,
+        )
+
+class MarkListingAvailableAPIView(APIView):
+    permission_classes = [
+        permissions.IsAuthenticated,
+        IsNotBanned,
+        IsVerifiedUser,
+    ]
+
+    def post(self, request, pk):
+        try:
+            listing = Listing.objects.get(
+                pk=pk,
+                seller=request.user,
+            )
+        except Listing.DoesNotExist:
+            return Response(
+                {"detail": "Listing not found."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        if listing.status == Listing.STATUS_DELETED:
+            return Response(
+                {"detail": "Deleted listings cannot be made available."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if listing.status == Listing.STATUS_REJECTED:
+            return Response(
+                {"detail": "Rejected listings must be edited and resubmitted."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        listing.status = Listing.STATUS_ACTIVE
+        listing.sold_at = None
+
+        if not listing.expires_at or listing.expires_at <= timezone.now():
+            listing.expires_at = timezone.now() + timedelta(days=30)
+
+        listing.save(
+            update_fields=[
+                "status",
+                "sold_at",
+                "expires_at",
+                "updated_at",
+            ]
+        )
+
+        return Response(
+            {
+                "message": "Listing marked as available successfully.",
+                "listing_id": listing.id,
+                "status": listing.status,
+            },
+            status=status.HTTP_200_OK,
+        )
+
+class MarkListingUnavailableAPIView(APIView):
+    permission_classes = [
+        permissions.IsAuthenticated,
+        IsNotBanned,
+        IsVerifiedUser,
+    ]
+
+    def post(self, request, pk):
+        try:
+            listing = Listing.objects.get(
+                pk=pk,
+                seller=request.user,
+            )
+        except Listing.DoesNotExist:
+            return Response(
+                {"detail": "Listing not found."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        if listing.status != Listing.STATUS_ACTIVE:
+            return Response(
+                {"detail": "Only active listings can be marked unavailable."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        listing.status = Listing.STATUS_UNAVAILABLE
+        listing.save(update_fields=["status", "updated_at"])
+
+        return Response(
+            {
+                "message": "Listing marked as unavailable successfully.",
+                "listing_id": listing.id,
+                "status": listing.status,
+            },
+            status=status.HTTP_200_OK,
+        )
+    
+
+class RelistListingAPIView(APIView):
+    permission_classes = [
+        permissions.IsAuthenticated,
+        IsNotBanned,
+        IsVerifiedUser,
+    ]
+
+    def post(self, request, pk):
+        try:
+            listing = Listing.objects.get(
+                pk=pk,
+                seller=request.user,
+            )
+        except Listing.DoesNotExist:
+            return Response(
+                {"detail": "Listing not found."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        if listing.status == Listing.STATUS_DELETED:
+            return Response(
+                {"detail": "Deleted listings cannot be relisted."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if listing.status == Listing.STATUS_REJECTED:
+            return Response(
+                {"detail": "Rejected listings must be edited and resubmitted."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        listing.status = Listing.STATUS_ACTIVE
+        listing.sold_at = None
+        listing.expires_at = timezone.now() + timedelta(days=30)
+
+        listing.save(
+            update_fields=[
+                "status",
+                "sold_at",
+                "expires_at",
+                "updated_at",
+            ]
+        )
+
+        return Response(
+            {
+                "message": "Listing relisted successfully.",
+                "listing_id": listing.id,
+                "status": listing.status,
+                "expires_at": listing.expires_at,
             },
             status=status.HTTP_200_OK,
         )

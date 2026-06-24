@@ -7,6 +7,7 @@ class Listing(models.Model):
     STATUS_DRAFT = "draft"
     STATUS_PENDING = "pending"
     STATUS_ACTIVE = "active"
+    STATUS_UNAVAILABLE = "unavailable"
     STATUS_REJECTED = "rejected"
     STATUS_SOLD = "sold"
     STATUS_EXPIRED = "expired"
@@ -16,6 +17,7 @@ class Listing(models.Model):
         (STATUS_DRAFT, "Draft"),
         (STATUS_PENDING, "Pending Approval"),
         (STATUS_ACTIVE, "Active"),
+        (STATUS_UNAVAILABLE, "Unavailable"),
         (STATUS_REJECTED, "Rejected"),
         (STATUS_SOLD, "Sold"),
         (STATUS_EXPIRED, "Expired"),

@@ -3,13 +3,15 @@ from django.urls import path
 from .views import (
     ListingListCreateAPIView,
     ListingDetailAPIView,
-    MarkListingSoldAPIView,
-    RenewListingAPIView,
     ListingImageUploadAPIView,
     ListingImageDeleteAPIView,
-    SetPrimaryListingImageAPIView
+    SetPrimaryListingImageAPIView,
+    MarkListingSoldAPIView,
+    MarkListingAvailableAPIView,
+    MarkListingUnavailableAPIView,
+    RelistListingAPIView,
+    RenewListingAPIView
 )
-
 from apps.moderation.views import ListingReportCreateAPIView
 
 
@@ -29,10 +31,14 @@ urlpatterns = [
         name="listing_image_delete",
     ),
     path(
-    "<int:pk>/images/<int:image_id>/set-primary/",
-    SetPrimaryListingImageAPIView.as_view(),
-    name="listing_image_set_primary",
-),
+        "<int:pk>/images/<int:image_id>/set-primary/",
+        SetPrimaryListingImageAPIView.as_view(),
+        name="listing_image_set_primary",
+    ),
+
+    path("<int:pk>/mark-available/", MarkListingAvailableAPIView.as_view(), name="mark_available"),
+    path("<int:pk>/mark-unavailable/", MarkListingUnavailableAPIView.as_view(), name="mark_unavailable"),
+    path("<int:pk>/relist/", RelistListingAPIView.as_view(), name="relist"),
 
     path("<int:listing_id>/report/", ListingReportCreateAPIView.as_view(), name="listing_report"),
 ]
