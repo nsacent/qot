@@ -162,36 +162,121 @@ class AdminDashboardAPIView(APIView):
 
 class PendingListingListAPIView(generics.ListAPIView):
     serializer_class = AdminListingSerializer
-    permission_classes = [permissions.IsAuthenticated, IsAdminOrModerator]
+    permission_classes = [
+        permissions.IsAuthenticated,
+        IsAdminOrModerator,
+    ]
 
     def get_queryset(self):
-        return (
+        queryset = (
             Listing.objects
             .filter(status=Listing.STATUS_PENDING)
-            .select_related("seller", "category", "city")
+            .select_related(
+                "seller",
+                "category",
+                "category__parent",
+                "city",
+                "city__region",
+            )
+            .prefetch_related("images")
             .order_by("-created_at")
         )
+
+        search = self.request.query_params.get("search")
+        seller = self.request.query_params.get("seller")
+        category = self.request.query_params.get("category")
+        city = self.request.query_params.get("city")
+
+        if search:
+            queryset = queryset.filter(
+                Q(title__icontains=search)
+                | Q(description__icontains=search)
+                | Q(seller__full_name__icontains=search)
+                | Q(seller__phone__icontains=search)
+            )
+
+        if seller:
+            queryset = queryset.filter(seller_id=seller)
+
+        if category:
+            queryset = queryset.filter(
+                Q(category__slug=category)
+                | Q(category__parent__slug=category)
+            )
+
+        if city:
+            queryset = queryset.filter(city__slug=city)
+
+        return queryset.distinct()
 
 
 class AdminListingListAPIView(generics.ListAPIView):
     serializer_class = AdminListingSerializer
-    permission_classes = [permissions.IsAuthenticated, IsAdminOrModerator]
+    permission_classes = [
+        permissions.IsAuthenticated,
+        IsAdminOrModerator,
+    ]
 
     def get_queryset(self):
         queryset = (
             Listing.objects
             .exclude(status=Listing.STATUS_DELETED)
-            .select_related("seller", "category", "city")
+            .select_related(
+                "seller",
+                "category",
+                "category__parent",
+                "city",
+                "city__region",
+            )
+            .prefetch_related("images")
             .order_by("-created_at")
         )
 
+        search = self.request.query_params.get("search")
         status_param = self.request.query_params.get("status")
+        seller = self.request.query_params.get("seller")
+        category = self.request.query_params.get("category")
+        city = self.request.query_params.get("city")
+        is_featured = self.request.query_params.get("is_featured")
+        date_from = self.request.query_params.get("date_from")
+        date_to = self.request.query_params.get("date_to")
+
+        if search:
+            queryset = queryset.filter(
+                Q(title__icontains=search)
+                | Q(description__icontains=search)
+                | Q(seller__full_name__icontains=search)
+                | Q(seller__phone__icontains=search)
+            )
 
         if status_param:
             queryset = queryset.filter(status=status_param)
 
-        return queryset
+        if seller:
+            queryset = queryset.filter(seller_id=seller)
 
+        if category:
+            queryset = queryset.filter(
+                Q(category__slug=category)
+                | Q(category__parent__slug=category)
+            )
+
+        if city:
+            queryset = queryset.filter(city__slug=city)
+
+        if is_featured == "true":
+            queryset = queryset.filter(is_featured=True)
+
+        if is_featured == "false":
+            queryset = queryset.filter(is_featured=False)
+
+        if date_from:
+            queryset = queryset.filter(created_at__date__gte=date_from)
+
+        if date_to:
+            queryset = queryset.filter(created_at__date__lte=date_to)
+
+        return queryset.distinct()
 
 class ApproveListingAPIView(APIView):
     permission_classes = [permissions.IsAuthenticated, IsAdminOrModerator]
