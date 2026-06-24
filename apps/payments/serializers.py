@@ -4,11 +4,34 @@ from rest_framework import serializers
 
 from apps.listings.models import Listing
 
-from .models import Payment
+from .models import Payment, PromotionPackage
 
+
+class PromotionPackageSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = PromotionPackage
+        fields = [
+            "id",
+            "name",
+            "package_type",
+            "description",
+            "duration_days",
+            "price",
+            "currency",
+            "is_active",
+            "sort_order",
+            "created_at",
+            "updated_at",
+        ]
+        read_only_fields = [
+            "id",
+            "created_at",
+            "updated_at",
+        ]
 
 class PaymentSerializer(serializers.ModelSerializer):
     listing_title = serializers.CharField(source="listing.title", read_only=True)
+    package_name = serializers.CharField(source="package.name", read_only=True)
 
     class Meta:
         model = Payment
@@ -16,6 +39,8 @@ class PaymentSerializer(serializers.ModelSerializer):
             "id",
             "user",
             "listing",
+            "package",
+            "package_name",
             "listing_title",
             "purpose",
             "amount",
@@ -49,10 +74,17 @@ class PaymentCreateSerializer(serializers.ModelSerializer):
         allow_null=True,
     )
 
+    package = serializers.PrimaryKeyRelatedField(
+        queryset=PromotionPackage.objects.filter(is_active=True),
+        required=False,
+        allow_null=True,
+    )
+
     class Meta:
         model = Payment
         fields = [
             "listing",
+            "package",
             "purpose",
             "amount",
             "currency",
@@ -63,6 +95,13 @@ class PaymentCreateSerializer(serializers.ModelSerializer):
         request = self.context["request"]
         listing = attrs.get("listing")
         purpose = attrs.get("purpose")
+        package = attrs.get("package")
+
+        if package:
+            attrs["purpose"] = package.package_type
+            attrs["amount"] = package.price
+            attrs["currency"] = package.currency
+            purpose = package.package_type
 
         if attrs["amount"] <= 0:
             raise serializers.ValidationError(

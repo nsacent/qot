@@ -3,8 +3,7 @@ from rest_framework import serializers
 from apps.accounts.models import User
 from apps.listings.models import Listing
 
-from apps.payments.models import Payment
-
+from apps.payments.models import Payment, PromotionPackage
 
 class AdminUserSerializer(serializers.ModelSerializer):
     class Meta:
@@ -124,3 +123,26 @@ class AdminMarkPaymentFailedSerializer(serializers.Serializer):
         required=False,
         allow_blank=True,
     )
+
+
+class AdminPromotionPackageSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = PromotionPackage
+        fields = [
+            "id",
+            "name",
+            "package_type",
+            "description",
+            "duration_days",
+            "price",
+            "currency",
+            "is_active",
+            "sort_order",
+            "created_at",
+            "updated_at",
+        ]
+        read_only_fields = [
+            "id",
+            "created_at",
+            "updated_at",
+        ]

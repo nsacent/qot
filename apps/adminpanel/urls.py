@@ -14,6 +14,8 @@ from .views import (
     AdminPaymentListAPIView,
     AdminMarkPaymentPaidAPIView,
     AdminMarkPaymentFailedAPIView,
+    AdminPromotionPackageListCreateAPIView,
+    AdminPromotionPackageDetailAPIView,
 )
 
 
@@ -40,4 +42,6 @@ urlpatterns = [
     path("payments/<int:pk>/mark-paid/", AdminMarkPaymentPaidAPIView.as_view(), name="payment_mark_paid"),
     path("payments/<int:pk>/mark-failed/", AdminMarkPaymentFailedAPIView.as_view(), name="payment_mark_failed"),
 
+    path("packages/", AdminPromotionPackageListCreateAPIView.as_view(), name="package_list_create"),
+    path("packages/<int:pk>/", AdminPromotionPackageDetailAPIView.as_view(), name="package_detail"),
 ]

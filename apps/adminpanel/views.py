@@ -13,7 +13,7 @@ from django.utils import timezone
 
 from .permissions import IsAdminOrModerator
 
-from apps.payments.models import Payment
+from apps.payments.models import Payment, PromotionPackage
 
 from .serializers import (
     AdminUserSerializer,
@@ -24,6 +24,7 @@ from .serializers import (
     AdminPaymentSerializer,
     AdminMarkPaymentPaidSerializer,
     AdminMarkPaymentFailedSerializer,
+    AdminPromotionPackageSerializer
 )
 
 from apps.notifications.services import (
@@ -158,9 +159,6 @@ class RejectListingAPIView(APIView):
             status=status.HTTP_200_OK,
         )
 
-
-
-
 class FeatureListingAPIView(APIView):
     permission_classes = [permissions.IsAuthenticated, IsAdminOrModerator]
 
@@ -214,11 +212,6 @@ class UnfeatureListingAPIView(APIView):
             },
             status=status.HTTP_200_OK,
         )
-
-
-
-
-
 
 
 class AdminUserListAPIView(generics.ListAPIView):
@@ -336,7 +329,7 @@ class AdminMarkPaymentPaidAPIView(APIView):
 
     def post(self, request, pk):
         try:
-            payment = Payment.objects.select_related("listing").get(pk=pk)
+            payment = Payment.objects.select_related("listing", "package").get(pk=pk)
         except Payment.DoesNotExist:
             return Response(
                 {"detail": "Payment not found."},
@@ -368,7 +361,14 @@ class AdminMarkPaymentPaidAPIView(APIView):
             and payment.listing is not None
         ):
             payment.listing.is_featured = True
-            payment.listing.featured_until = timezone.now() + timedelta(days=7)
+
+            duration_days = 7
+
+            if payment.package:
+                duration_days = payment.package.duration_days
+
+            payment.listing.featured_until = timezone.now() + timedelta(days=duration_days)
+
             payment.listing.save(
                 update_fields=[
                     "is_featured",
@@ -415,3 +415,42 @@ class AdminMarkPaymentFailedAPIView(APIView):
             },
             status=status.HTTP_200_OK,
         )
+    
+
+class AdminPromotionPackageListCreateAPIView(generics.ListCreateAPIView):
+    serializer_class = AdminPromotionPackageSerializer
+    permission_classes = [
+        permissions.IsAuthenticated,
+        IsAdminOrModerator,
+    ]
+
+    def get_queryset(self):
+        queryset = PromotionPackage.objects.all().order_by(
+            "sort_order",
+            "price",
+            "name",
+        )
+
+        package_type = self.request.query_params.get("package_type")
+        is_active = self.request.query_params.get("is_active")
+
+        if package_type:
+            queryset = queryset.filter(package_type=package_type)
+
+        if is_active == "true":
+            queryset = queryset.filter(is_active=True)
+
+        if is_active == "false":
+            queryset = queryset.filter(is_active=False)
+
+        return queryset
+
+
+class AdminPromotionPackageDetailAPIView(generics.RetrieveUpdateAPIView):
+    serializer_class = AdminPromotionPackageSerializer
+    permission_classes = [
+        permissions.IsAuthenticated,
+        IsAdminOrModerator,
+    ]
+
+    queryset = PromotionPackage.objects.all()
