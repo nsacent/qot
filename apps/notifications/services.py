@@ -129,3 +129,15 @@ def create_payment_failed_notification(payment):
         ),
         listing=payment.listing,
     )
+
+def create_saved_search_match_notification(user, listing, saved_search):
+    return create_notification(
+        user=user,
+        notification_type=Notification.TYPE_SYSTEM,
+        title="New listing matches your saved search",
+        message=(
+            f"A new listing '{listing.title}' matches your saved search "
+            f"'{saved_search.name}'."
+        ),
+        listing=listing,
+    )

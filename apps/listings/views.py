@@ -23,6 +23,8 @@ from apps.common.permissions import IsNotBanned, IsVerifiedUser
 from datetime import timedelta
 from django.utils import timezone
 
+from apps.searches.alerts import notify_saved_search_matches_for_listing
+
 
 class ListingListCreateAPIView(generics.ListCreateAPIView):
     filterset_class = ListingFilter
@@ -401,6 +403,8 @@ class RelistListingAPIView(APIView):
             ]
         )
 
+        notify_saved_search_matches_for_listing(listing)
+
         return Response(
             {
                 "message": "Listing relisted successfully.",
@@ -455,6 +459,8 @@ class RenewListingAPIView(APIView):
                 "updated_at",
             ]
         )
+
+        notify_saved_search_matches_for_listing(listing)
 
         return Response(
             {

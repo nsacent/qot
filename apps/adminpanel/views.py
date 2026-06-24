@@ -7,6 +7,7 @@ from apps.accounts.models import User
 from apps.listings.models import Listing
 from apps.moderation.models import ListingReport
 from apps.accounts.trust import calculate_user_trust_score
+from apps.searches.alerts import notify_saved_search_matches_for_listing
 
 from datetime import timedelta
 from django.utils import timezone
@@ -300,6 +301,7 @@ class ApproveListingAPIView(APIView):
 
         create_listing_approved_notification(listing)
         calculate_user_trust_score(listing.seller)
+        notify_saved_search_matches_for_listing(listing)
 
         return Response(
             {
