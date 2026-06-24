@@ -363,6 +363,20 @@ class AdminMarkPaymentPaidAPIView(APIView):
             ]
         )
 
+        if (
+            payment.purpose == Payment.PURPOSE_FEATURED_LISTING
+            and payment.listing is not None
+        ):
+            payment.listing.is_featured = True
+            payment.listing.featured_until = timezone.now() + timedelta(days=7)
+            payment.listing.save(
+                update_fields=[
+                    "is_featured",
+                    "featured_until",
+                    "updated_at",
+                ]
+            )
+
         return Response(
             {
                 "message": "Payment marked as paid successfully.",
