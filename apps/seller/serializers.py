@@ -46,3 +46,27 @@ class SellerListingSerializer(serializers.ModelSerializer):
             return request.build_absolute_uri(image.image.url)
 
         return image.image.url
+    
+
+class SellerAnalyticsSummarySerializer(serializers.Serializer):
+    total_listings = serializers.IntegerField()
+    active_listings = serializers.IntegerField()
+    sold_listings = serializers.IntegerField()
+    expired_listings = serializers.IntegerField()
+    unavailable_listings = serializers.IntegerField()
+    total_views = serializers.IntegerField()
+    total_favorites = serializers.IntegerField()
+    total_chat_threads = serializers.IntegerField()
+
+
+class SellerListingAnalyticsSerializer(serializers.Serializer):
+    listing_id = serializers.IntegerField()
+    title = serializers.CharField()
+    status = serializers.CharField()
+    price = serializers.DecimalField(max_digits=12, decimal_places=2)
+    views_count = serializers.IntegerField()
+    favorites_count = serializers.IntegerField()
+    chat_threads_count = serializers.IntegerField()
+    is_featured = serializers.BooleanField()
+    created_at = serializers.DateTimeField()
+    expires_at = serializers.DateTimeField(allow_null=True)
