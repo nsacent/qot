@@ -82,6 +82,7 @@ class AdminPaymentSerializer(serializers.ModelSerializer):
     user_name = serializers.CharField(source="user.full_name", read_only=True)
     user_phone = serializers.CharField(source="user.phone", read_only=True)
     listing_title = serializers.CharField(source="listing.title", read_only=True)
+    package_name = serializers.CharField(source="package.name", read_only=True)
 
     class Meta:
         model = Payment
@@ -92,6 +93,8 @@ class AdminPaymentSerializer(serializers.ModelSerializer):
             "user_phone",
             "listing",
             "listing_title",
+            "package",
+            "package_name",
             "purpose",
             "amount",
             "currency",
@@ -104,7 +107,6 @@ class AdminPaymentSerializer(serializers.ModelSerializer):
             "created_at",
             "updated_at",
         ]
-
 
 class AdminMarkPaymentPaidSerializer(serializers.Serializer):
     provider_reference = serializers.CharField(

@@ -500,12 +500,28 @@ class AdminPaymentListAPIView(generics.ListAPIView):
     def get_queryset(self):
         queryset = (
             Payment.objects
-            .select_related("user", "listing")
+            .select_related("user", "listing", "package")
             .order_by("-created_at")
         )
 
+        search = self.request.query_params.get("search")
         status_param = self.request.query_params.get("status")
         purpose = self.request.query_params.get("purpose")
+        user = self.request.query_params.get("user")
+        listing = self.request.query_params.get("listing")
+        payment_method = self.request.query_params.get("payment_method")
+        date_from = self.request.query_params.get("date_from")
+        date_to = self.request.query_params.get("date_to")
+
+        if search:
+            queryset = queryset.filter(
+                Q(reference__icontains=search)
+                | Q(provider_reference__icontains=search)
+                | Q(user__full_name__icontains=search)
+                | Q(user__phone__icontains=search)
+                | Q(user__email__icontains=search)
+                | Q(listing__title__icontains=search)
+            )
 
         if status_param:
             queryset = queryset.filter(status=status_param)
@@ -513,8 +529,22 @@ class AdminPaymentListAPIView(generics.ListAPIView):
         if purpose:
             queryset = queryset.filter(purpose=purpose)
 
-        return queryset
+        if user:
+            queryset = queryset.filter(user_id=user)
 
+        if listing:
+            queryset = queryset.filter(listing_id=listing)
+
+        if payment_method:
+            queryset = queryset.filter(payment_method=payment_method)
+
+        if date_from:
+            queryset = queryset.filter(created_at__date__gte=date_from)
+
+        if date_to:
+            queryset = queryset.filter(created_at__date__lte=date_to)
+
+        return queryset.distinct()
 
 class AdminMarkPaymentPaidAPIView(APIView):
     permission_classes = [
