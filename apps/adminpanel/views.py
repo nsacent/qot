@@ -1,4 +1,4 @@
-from django.db.models import Count, Sum
+from django.db.models import Sum, Q
 from rest_framework import generics, permissions, status
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -308,13 +308,25 @@ class UnfeatureListingAPIView(APIView):
 
 class AdminUserListAPIView(generics.ListAPIView):
     serializer_class = AdminUserSerializer
-    permission_classes = [permissions.IsAuthenticated, IsAdminOrModerator]
+    permission_classes = [
+        permissions.IsAuthenticated,
+        IsAdminOrModerator,
+    ]
 
     def get_queryset(self):
         queryset = User.objects.all().order_by("-date_joined")
 
+        search = self.request.query_params.get("search")
         role = self.request.query_params.get("role")
         is_banned = self.request.query_params.get("is_banned")
+        is_verified = self.request.query_params.get("is_verified")
+
+        if search:
+            queryset = queryset.filter(
+                Q(full_name__icontains=search)
+                | Q(phone__icontains=search)
+                | Q(email__icontains=search)
+            )
 
         if role:
             queryset = queryset.filter(role=role)
@@ -325,8 +337,14 @@ class AdminUserListAPIView(generics.ListAPIView):
         if is_banned == "false":
             queryset = queryset.filter(is_banned=False)
 
-        return queryset
+        if is_verified == "true":
+            queryset = queryset.filter(is_verified=True)
 
+        if is_verified == "false":
+            queryset = queryset.filter(is_verified=False)
+
+        return queryset
+    
 
 class BanUserAPIView(APIView):
     permission_classes = [permissions.IsAuthenticated, IsAdminOrModerator]
