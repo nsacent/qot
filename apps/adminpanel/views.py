@@ -24,7 +24,8 @@ from .serializers import (
     AdminPaymentSerializer,
     AdminMarkPaymentPaidSerializer,
     AdminMarkPaymentFailedSerializer,
-    AdminPromotionPackageSerializer
+    AdminPromotionPackageSerializer,
+    AdminDashboardSerializer,
 )
 
 from apps.notifications.services import (
@@ -35,39 +36,91 @@ from apps.notifications.services import (
 )
 
 class AdminDashboardAPIView(APIView):
-    permission_classes = [permissions.IsAuthenticated, IsAdminOrModerator]
+    permission_classes = [
+        permissions.IsAuthenticated,
+        IsAdminOrModerator,
+    ]
 
     def get(self, request):
+        users = User.objects.all()
+        listings = Listing.objects.exclude(status=Listing.STATUS_DELETED)
+        reports = ListingReport.objects.all()
+        payments = Payment.objects.all()
+
+        paid_payments = payments.filter(status=Payment.STATUS_PAID)
+
+        total_revenue = paid_payments.aggregate(
+            total=Sum("amount"),
+        )["total"] or 0
+
+        featured_listing_revenue = paid_payments.filter(
+            purpose=Payment.PURPOSE_FEATURED_LISTING,
+        ).aggregate(
+            total=Sum("amount"),
+        )["total"] or 0
+
+        boost_listing_revenue = paid_payments.filter(
+            purpose=Payment.PURPOSE_BOOST_LISTING,
+        ).aggregate(
+            total=Sum("amount"),
+        )["total"] or 0
+
         data = {
-            "users": {
-                "total": User.objects.count(),
-                "active": User.objects.filter(is_active=True, is_banned=False).count(),
-                "banned": User.objects.filter(is_banned=True).count(),
-                "verified": User.objects.filter(is_verified=True).count(),
-            },
-            "listings": {
-                "total": Listing.objects.exclude(status=Listing.STATUS_DELETED).count(),
-                "pending": Listing.objects.filter(status=Listing.STATUS_PENDING).count(),
-                "active": Listing.objects.filter(status=Listing.STATUS_ACTIVE).count(),
-                "rejected": Listing.objects.filter(status=Listing.STATUS_REJECTED).count(),
-                "sold": Listing.objects.filter(status=Listing.STATUS_SOLD).count(),
-                "expired": Listing.objects.filter(status=Listing.STATUS_EXPIRED).count(),
-            },
-            "reports": {
-                "total": ListingReport.objects.count(),
-                "open": ListingReport.objects.filter(is_resolved=False).count(),
-                "resolved": ListingReport.objects.filter(is_resolved=True).count(),
-            },
-            "top_categories": list(
-                Listing.objects
-                .exclude(status=Listing.STATUS_DELETED)
-                .values("category__name")
-                .annotate(total=Count("id"))
-                .order_by("-total")[:10]
-            ),
+            "total_users": users.count(),
+            "normal_users": users.filter(role=User.ROLE_USER).count(),
+            "admin_users": users.filter(role=User.ROLE_ADMIN).count(),
+            "moderator_users": users.filter(role=User.ROLE_MODERATOR).count(),
+            "banned_users": users.filter(is_banned=True).count(),
+
+            "total_listings": listings.count(),
+            "active_listings": listings.filter(
+                status=Listing.STATUS_ACTIVE,
+            ).count(),
+            
+            "pending_listings": listings.filter(
+                status=Listing.STATUS_PENDING,
+            ).count(),
+            "rejected_listings": listings.filter(
+                status=Listing.STATUS_REJECTED,
+            ).count(),
+            "sold_listings": listings.filter(
+                status=Listing.STATUS_SOLD,
+            ).count(),
+            "expired_listings": listings.filter(
+                status=Listing.STATUS_EXPIRED,
+            ).count(),
+            "unavailable_listings": listings.filter(
+                status=Listing.STATUS_UNAVAILABLE,
+            ).count(),
+
+            "total_reports": reports.count(),
+            "unresolved_reports": reports.filter(
+                is_resolved=False,
+            ).count(),
+            "resolved_reports": reports.filter(
+                is_resolved=True,
+            ).count(),
+
+            "total_payments": payments.count(),
+            "pending_payments": payments.filter(
+                status=Payment.STATUS_PENDING,
+            ).count(),
+            "paid_payments": payments.filter(
+                status=Payment.STATUS_PAID,
+            ).count(),
+            "failed_payments": payments.filter(
+                status=Payment.STATUS_FAILED,
+            ).count(),
+
+            "total_revenue": total_revenue,
+            "featured_listing_revenue": featured_listing_revenue,
+            "boost_listing_revenue": boost_listing_revenue,
         }
 
-        return Response(data, status=status.HTTP_200_OK)
+        serializer = AdminDashboardSerializer(data)
+
+        return Response(serializer.data, status=status.HTTP_200_OK)
+    
 
 
 class PendingListingListAPIView(generics.ListAPIView):

@@ -146,3 +146,31 @@ class AdminPromotionPackageSerializer(serializers.ModelSerializer):
             "created_at",
             "updated_at",
         ]
+
+class AdminDashboardSerializer(serializers.Serializer):
+    total_users = serializers.IntegerField()
+    normal_users = serializers.IntegerField()
+    admin_users = serializers.IntegerField()
+    moderator_users = serializers.IntegerField()
+    banned_users = serializers.IntegerField()
+
+    total_listings = serializers.IntegerField()
+    active_listings = serializers.IntegerField()
+    pending_listings = serializers.IntegerField()
+    rejected_listings = serializers.IntegerField()
+    sold_listings = serializers.IntegerField()
+    expired_listings = serializers.IntegerField()
+    unavailable_listings = serializers.IntegerField()
+
+    total_reports = serializers.IntegerField()
+    unresolved_reports = serializers.IntegerField()
+    resolved_reports = serializers.IntegerField()
+
+    total_payments = serializers.IntegerField()
+    pending_payments = serializers.IntegerField()
+    paid_payments = serializers.IntegerField()
+    failed_payments = serializers.IntegerField()
+
+    total_revenue = serializers.DecimalField(max_digits=12, decimal_places=2)
+    featured_listing_revenue = serializers.DecimalField(max_digits=12, decimal_places=2)
+    boost_listing_revenue = serializers.DecimalField(max_digits=12, decimal_places=2)
