@@ -6,6 +6,7 @@ from rest_framework.views import APIView
 from apps.accounts.models import User
 from apps.listings.models import Listing
 from apps.moderation.models import ListingReport
+from apps.accounts.trust import calculate_user_trust_score
 
 from .permissions import IsAdminOrModerator
 from .serializers import (
@@ -106,6 +107,7 @@ class ApproveListingAPIView(APIView):
         listing.save(update_fields=["status", "rejection_reason", "updated_at"])
 
         create_listing_approved_notification(listing)
+        calculate_user_trust_score(listing.seller)
 
         return Response(
             {
@@ -136,6 +138,7 @@ class RejectListingAPIView(APIView):
         listing.save(update_fields=["status", "rejection_reason", "updated_at"])
 
         create_listing_rejected_notification(listing)
+        calculate_user_trust_score(listing.seller)
 
         return Response(
             {
@@ -192,6 +195,7 @@ class BanUserAPIView(APIView):
         user.is_banned = True
         user.banned_reason = serializer.validated_data.get("banned_reason", "")
         user.save(update_fields=["is_banned", "banned_reason", "updated_at"])
+        calculate_user_trust_score(user)
 
         return Response(
             {

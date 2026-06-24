@@ -5,6 +5,8 @@ from apps.listings.models import Listing
 
 from .models import SellerReview
 
+from apps.accounts.trust import calculate_user_trust_score
+
 
 class SellerReviewSerializer(serializers.ModelSerializer):
     reviewer_name = serializers.CharField(source="reviewer.full_name", read_only=True)
@@ -96,7 +98,11 @@ class SellerReviewCreateSerializer(serializers.ModelSerializer):
     def create(self, validated_data):
         request = self.context["request"]
 
-        return SellerReview.objects.create(
+        review = SellerReview.objects.create(
             reviewer=request.user,
             **validated_data,
         )
+
+        calculate_user_trust_score(review.seller)
+
+        return review
