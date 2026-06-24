@@ -2,6 +2,7 @@ from rest_framework import serializers
 
 from apps.accounts.models import User
 from apps.listings.models import Listing
+from apps.reviews.models import SellerReview
 
 from apps.payments.models import Payment, PromotionPackage
 
@@ -191,3 +192,31 @@ class AdminCancelPaymentSerializer(serializers.Serializer):
         required=False,
         allow_blank=True,
     )
+
+
+class AdminSellerReviewSerializer(serializers.ModelSerializer):
+    reviewer_name = serializers.CharField(source="reviewer.full_name", read_only=True)
+    reviewer_phone = serializers.CharField(source="reviewer.phone", read_only=True)
+    seller_name = serializers.CharField(source="seller.full_name", read_only=True)
+    seller_phone = serializers.CharField(source="seller.phone", read_only=True)
+    listing_title = serializers.CharField(source="listing.title", read_only=True)
+
+    class Meta:
+        model = SellerReview
+        fields = [
+            "id",
+            "reviewer",
+            "reviewer_name",
+            "reviewer_phone",
+            "seller",
+            "seller_name",
+            "seller_phone",
+            "listing",
+            "listing_title",
+            "rating",
+            "comment",
+            "is_visible",
+            "created_at",
+            "updated_at",
+        ]
+        read_only_fields = fields

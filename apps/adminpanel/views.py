@@ -15,6 +15,8 @@ from .permissions import IsAdminOrModerator
 
 from apps.payments.models import Payment, PromotionPackage
 
+from apps.reviews.models import SellerReview
+
 from .serializers import (
     AdminUserSerializer,
     AdminListingSerializer,
@@ -27,6 +29,7 @@ from .serializers import (
     AdminPromotionPackageSerializer,
     AdminDashboardSerializer,
     AdminCancelPaymentSerializer,
+    AdminSellerReviewSerializer
 )
 
 from apps.notifications.services import (
@@ -768,3 +771,142 @@ class AdminPromotionPackageDetailAPIView(generics.RetrieveUpdateAPIView):
     ]
 
     queryset = PromotionPackage.objects.all()
+
+
+
+class AdminSellerReviewListAPIView(generics.ListAPIView):
+    serializer_class = AdminSellerReviewSerializer
+    permission_classes = [
+        permissions.IsAuthenticated,
+        IsAdminOrModerator,
+    ]
+
+    def get_queryset(self):
+        queryset = (
+            SellerReview.objects
+            .select_related(
+                "reviewer",
+                "seller",
+                "listing",
+            )
+            .order_by("-created_at")
+        )
+
+        search = self.request.query_params.get("search")
+        rating = self.request.query_params.get("rating")
+        seller = self.request.query_params.get("seller")
+        reviewer = self.request.query_params.get("reviewer")
+        listing = self.request.query_params.get("listing")
+        is_visible = self.request.query_params.get("is_visible")
+        date_from = self.request.query_params.get("date_from")
+        date_to = self.request.query_params.get("date_to")
+
+        if search:
+            queryset = queryset.filter(
+                Q(comment__icontains=search)
+                | Q(seller__full_name__icontains=search)
+                | Q(seller__phone__icontains=search)
+                | Q(reviewer__full_name__icontains=search)
+                | Q(reviewer__phone__icontains=search)
+                | Q(listing__title__icontains=search)
+            )
+
+        if rating:
+            queryset = queryset.filter(rating=rating)
+
+        if seller:
+            queryset = queryset.filter(seller_id=seller)
+
+        if reviewer:
+            queryset = queryset.filter(reviewer_id=reviewer)
+
+        if listing:
+            queryset = queryset.filter(listing_id=listing)
+
+        if is_visible == "true":
+            queryset = queryset.filter(is_visible=True)
+
+        if is_visible == "false":
+            queryset = queryset.filter(is_visible=False)
+
+        if date_from:
+            queryset = queryset.filter(created_at__date__gte=date_from)
+
+        if date_to:
+            queryset = queryset.filter(created_at__date__lte=date_to)
+
+        return queryset.distinct()
+
+
+class AdminHideSellerReviewAPIView(APIView):
+    permission_classes = [
+        permissions.IsAuthenticated,
+        IsAdminOrModerator,
+    ]
+
+    def post(self, request, pk):
+        try:
+            review = SellerReview.objects.select_related("seller").get(pk=pk)
+        except SellerReview.DoesNotExist:
+            return Response(
+                {"detail": "Review not found."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        if not review.is_visible:
+            return Response(
+                {"detail": "This review is already hidden."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        review.is_visible = False
+        review.save(update_fields=["is_visible", "updated_at"])
+
+        calculate_user_trust_score(review.seller)
+
+        return Response(
+            {
+                "message": "Review hidden successfully.",
+                "review": AdminSellerReviewSerializer(review).data,
+            },
+            status=status.HTTP_200_OK,
+        )
+
+
+class AdminShowSellerReviewAPIView(APIView):
+    permission_classes = [
+        permissions.IsAuthenticated,
+        IsAdminOrModerator,
+    ]
+
+    def post(self, request, pk):
+        try:
+            review = SellerReview.objects.select_related("seller").get(pk=pk)
+        except SellerReview.DoesNotExist:
+            return Response(
+                {"detail": "Review not found."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        if review.is_visible:
+            return Response(
+                {"detail": "This review is already visible."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        review.is_visible = True
+        review.save(update_fields=["is_visible", "updated_at"])
+
+        calculate_user_trust_score(review.seller)
+
+        return Response(
+            {
+                "message": "Review shown successfully.",
+                "review": AdminSellerReviewSerializer(review).data,
+            },
+            status=status.HTTP_200_OK,
+        )
+
+
+
+
