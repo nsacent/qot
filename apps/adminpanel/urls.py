@@ -11,6 +11,9 @@ from .views import (
     AdminUserListAPIView,
     BanUserAPIView,
     UnbanUserAPIView,
+    AdminPaymentListAPIView,
+    AdminMarkPaymentPaidAPIView,
+    AdminMarkPaymentFailedAPIView,
 )
 
 
@@ -31,4 +34,10 @@ urlpatterns = [
     path("users/", AdminUserListAPIView.as_view(), name="user_list"),
     path("users/<int:pk>/ban/", BanUserAPIView.as_view(), name="ban_user"),
     path("users/<int:pk>/unban/", UnbanUserAPIView.as_view(), name="unban_user"),
+    
+    
+    path("payments/", AdminPaymentListAPIView.as_view(), name="payment_list"),
+    path("payments/<int:pk>/mark-paid/", AdminMarkPaymentPaidAPIView.as_view(), name="payment_mark_paid"),
+    path("payments/<int:pk>/mark-failed/", AdminMarkPaymentFailedAPIView.as_view(), name="payment_mark_failed"),
+
 ]

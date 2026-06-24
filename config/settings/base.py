@@ -64,6 +64,7 @@ INSTALLED_APPS = [
     "apps.me.apps.MeConfig",
     "apps.searches.apps.SearchesConfig",
     "apps.reviews.apps.ReviewsConfig",
+    "apps.payments.apps.PaymentsConfig",
 ]
 
 

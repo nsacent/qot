@@ -13,12 +13,17 @@ from django.utils import timezone
 
 from .permissions import IsAdminOrModerator
 
+from apps.payments.models import Payment
+
 from .serializers import (
     AdminUserSerializer,
     AdminListingSerializer,
     ListingRejectSerializer,
     UserBanSerializer,
     FeatureListingSerializer,
+    AdminPaymentSerializer,
+    AdminMarkPaymentPaidSerializer,
+    AdminMarkPaymentFailedSerializer,
 )
 
 from apps.notifications.services import (
@@ -293,6 +298,106 @@ class UnbanUserAPIView(APIView):
             {
                 "message": "User unbanned successfully.",
                 "user": AdminUserSerializer(user).data,
+            },
+            status=status.HTTP_200_OK,
+        )
+
+class AdminPaymentListAPIView(generics.ListAPIView):
+    serializer_class = AdminPaymentSerializer
+    permission_classes = [
+        permissions.IsAuthenticated,
+        IsAdminOrModerator,
+    ]
+
+    def get_queryset(self):
+        queryset = (
+            Payment.objects
+            .select_related("user", "listing")
+            .order_by("-created_at")
+        )
+
+        status_param = self.request.query_params.get("status")
+        purpose = self.request.query_params.get("purpose")
+
+        if status_param:
+            queryset = queryset.filter(status=status_param)
+
+        if purpose:
+            queryset = queryset.filter(purpose=purpose)
+
+        return queryset
+
+
+class AdminMarkPaymentPaidAPIView(APIView):
+    permission_classes = [
+        permissions.IsAuthenticated,
+        IsAdminOrModerator,
+    ]
+
+    def post(self, request, pk):
+        try:
+            payment = Payment.objects.select_related("listing").get(pk=pk)
+        except Payment.DoesNotExist:
+            return Response(
+                {"detail": "Payment not found."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        serializer = AdminMarkPaymentPaidSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        payment.status = Payment.STATUS_PAID
+        payment.provider_reference = serializer.validated_data.get(
+            "provider_reference",
+            "",
+        )
+        payment.notes = serializer.validated_data.get("notes", "")
+        payment.paid_at = timezone.now()
+        payment.save(
+            update_fields=[
+                "status",
+                "provider_reference",
+                "notes",
+                "paid_at",
+                "updated_at",
+            ]
+        )
+
+        return Response(
+            {
+                "message": "Payment marked as paid successfully.",
+                "payment": AdminPaymentSerializer(payment).data,
+            },
+            status=status.HTTP_200_OK,
+        )
+
+
+class AdminMarkPaymentFailedAPIView(APIView):
+    permission_classes = [
+        permissions.IsAuthenticated,
+        IsAdminOrModerator,
+    ]
+
+    def post(self, request, pk):
+        try:
+            payment = Payment.objects.get(pk=pk)
+        except Payment.DoesNotExist:
+            return Response(
+                {"detail": "Payment not found."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        serializer = AdminMarkPaymentFailedSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        payment.status = Payment.STATUS_FAILED
+        payment.notes = serializer.validated_data.get("notes", "")
+        payment.save(update_fields=["status", "notes", "updated_at"])
+
+        return Response(
+            {
+                "message": "Payment marked as failed.",
+                "payment": AdminPaymentSerializer(payment).data,
             },
             status=status.HTTP_200_OK,
         )

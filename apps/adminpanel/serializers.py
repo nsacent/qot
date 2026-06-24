@@ -3,6 +3,8 @@ from rest_framework import serializers
 from apps.accounts.models import User
 from apps.listings.models import Listing
 
+from apps.payments.models import Payment
+
 
 class AdminUserSerializer(serializers.ModelSerializer):
     class Meta:
@@ -74,4 +76,51 @@ class FeatureListingSerializer(serializers.Serializer):
         min_value=1,
         max_value=365,
         default=7,
+    )
+
+
+class AdminPaymentSerializer(serializers.ModelSerializer):
+    user_name = serializers.CharField(source="user.full_name", read_only=True)
+    user_phone = serializers.CharField(source="user.phone", read_only=True)
+    listing_title = serializers.CharField(source="listing.title", read_only=True)
+
+    class Meta:
+        model = Payment
+        fields = [
+            "id",
+            "user",
+            "user_name",
+            "user_phone",
+            "listing",
+            "listing_title",
+            "purpose",
+            "amount",
+            "currency",
+            "payment_method",
+            "status",
+            "reference",
+            "provider_reference",
+            "notes",
+            "paid_at",
+            "created_at",
+            "updated_at",
+        ]
+
+
+class AdminMarkPaymentPaidSerializer(serializers.Serializer):
+    provider_reference = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        max_length=255,
+    )
+    notes = serializers.CharField(
+        required=False,
+        allow_blank=True,
+    )
+
+
+class AdminMarkPaymentFailedSerializer(serializers.Serializer):
+    notes = serializers.CharField(
+        required=False,
+        allow_blank=True,
     )
