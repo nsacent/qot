@@ -46,6 +46,7 @@ class AdminListingSerializer(serializers.ModelSerializer):
             "condition",
             "status",
             "is_featured",
+            "featured_until",
             "views_count",
             "favorites_count",
             "rejection_reason",
@@ -66,4 +67,11 @@ class UserBanSerializer(serializers.Serializer):
         max_length=1000,
         required=False,
         allow_blank=True,
+    )
+
+class FeatureListingSerializer(serializers.Serializer):
+    days = serializers.IntegerField(
+        min_value=1,
+        max_value=365,
+        default=7,
     )

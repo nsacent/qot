@@ -71,6 +71,11 @@ class Listing(models.Model):
 
     is_negotiable = models.BooleanField(default=True)
     is_featured = models.BooleanField(default=False)
+    
+    featured_until = models.DateTimeField(
+        null=True,
+        blank=True,
+    )
 
     views_count = models.PositiveIntegerField(default=0)
     favorites_count = models.PositiveIntegerField(default=0)

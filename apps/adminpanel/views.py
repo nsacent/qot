@@ -8,12 +8,17 @@ from apps.listings.models import Listing
 from apps.moderation.models import ListingReport
 from apps.accounts.trust import calculate_user_trust_score
 
+from datetime import timedelta
+from django.utils import timezone
+
 from .permissions import IsAdminOrModerator
+
 from .serializers import (
     AdminUserSerializer,
     AdminListingSerializer,
     ListingRejectSerializer,
     UserBanSerializer,
+    FeatureListingSerializer,
 )
 
 from apps.notifications.services import (
@@ -147,6 +152,68 @@ class RejectListingAPIView(APIView):
             },
             status=status.HTTP_200_OK,
         )
+
+
+
+
+class FeatureListingAPIView(APIView):
+    permission_classes = [permissions.IsAuthenticated, IsAdminOrModerator]
+
+    def post(self, request, pk):
+        try:
+            listing = Listing.objects.get(pk=pk)
+        except Listing.DoesNotExist:
+            return Response(
+                {"detail": "Listing not found."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        serializer = FeatureListingSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        days = serializer.validated_data["days"]
+
+        listing.is_featured = True
+        listing.featured_until = timezone.now() + timedelta(days=days)
+        listing.save(update_fields=["is_featured", "featured_until", "updated_at"])
+
+        return Response(
+            {
+                "message": "Listing featured successfully.",
+                "listing": AdminListingSerializer(listing).data,
+            },
+            status=status.HTTP_200_OK,
+        )
+
+
+class UnfeatureListingAPIView(APIView):
+    permission_classes = [permissions.IsAuthenticated, IsAdminOrModerator]
+
+    def post(self, request, pk):
+        try:
+            listing = Listing.objects.get(pk=pk)
+        except Listing.DoesNotExist:
+            return Response(
+                {"detail": "Listing not found."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        listing.is_featured = False
+        listing.featured_until = None
+        listing.save(update_fields=["is_featured", "featured_until", "updated_at"])
+
+        return Response(
+            {
+                "message": "Listing unfeatured successfully.",
+                "listing": AdminListingSerializer(listing).data,
+            },
+            status=status.HTTP_200_OK,
+        )
+
+
+
+
+
 
 
 class AdminUserListAPIView(generics.ListAPIView):

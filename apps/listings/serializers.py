@@ -178,6 +178,7 @@ class ListingListSerializer(serializers.ModelSerializer):
             "status",
             "is_negotiable",
             "is_featured",
+            "featured_until",
             "views_count",
             "favorites_count",
             "primary_image",
@@ -190,6 +191,7 @@ class ListingListSerializer(serializers.ModelSerializer):
             "status",
             "views_count",
             "favorites_count",
+            "featured_until",
             "created_at",
         ]
 
@@ -248,6 +250,7 @@ class ListingDetailSerializer(serializers.ModelSerializer):
             "status",
             "is_negotiable",
             "is_featured",
+            "featured_until",
             "views_count",
             "favorites_count",
             "expires_at",
@@ -268,6 +271,7 @@ class ListingDetailSerializer(serializers.ModelSerializer):
             "sold_at",
             "rejection_reason",
             "created_at",
+            "featured_until",
             "updated_at",
         ]
 
