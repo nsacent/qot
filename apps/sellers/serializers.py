@@ -2,6 +2,7 @@ from rest_framework import serializers
 
 from apps.accounts.models import User
 from apps.listings.models import Listing
+from django.db.models import Avg
 
 
 class PublicSellerSerializer(serializers.ModelSerializer):
@@ -10,6 +11,8 @@ class PublicSellerSerializer(serializers.ModelSerializer):
     business_name = serializers.CharField(source="profile.business_name", read_only=True)
     trust_score = serializers.IntegerField(source="profile.trust_score", read_only=True)
     total_active_listings = serializers.SerializerMethodField()
+    average_rating = serializers.SerializerMethodField()
+    total_reviews = serializers.SerializerMethodField()
 
     class Meta:
         model = User
@@ -21,6 +24,8 @@ class PublicSellerSerializer(serializers.ModelSerializer):
             "bio",
             "business_name",
             "trust_score",
+            "average_rating",
+            "total_reviews",
             "total_active_listings",
             "date_joined",
         ]
@@ -41,6 +46,19 @@ class PublicSellerSerializer(serializers.ModelSerializer):
     def get_total_active_listings(self, obj):
         return obj.listings.filter(status=Listing.STATUS_ACTIVE).count()
 
+    def get_average_rating(self, obj):
+        average = obj.received_reviews.filter(
+            is_visible=True,
+        ).aggregate(
+            average=Avg("rating"),
+        )["average"]
+
+        return round(average or 0, 1)
+
+    def get_total_reviews(self, obj):
+        return obj.received_reviews.filter(
+            is_visible=True,
+        ).count()
 
 class PublicSellerListingSerializer(serializers.ModelSerializer):
     category_name = serializers.CharField(source="category.name", read_only=True)
