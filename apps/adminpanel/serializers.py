@@ -174,3 +174,11 @@ class AdminDashboardSerializer(serializers.Serializer):
     total_revenue = serializers.DecimalField(max_digits=12, decimal_places=2)
     featured_listing_revenue = serializers.DecimalField(max_digits=12, decimal_places=2)
     boost_listing_revenue = serializers.DecimalField(max_digits=12, decimal_places=2)
+
+    today_revenue = serializers.DecimalField(max_digits=12, decimal_places=2)
+    this_week_revenue = serializers.DecimalField(max_digits=12, decimal_places=2)
+    this_month_revenue = serializers.DecimalField(max_digits=12, decimal_places=2)
+
+    today_paid_payments = serializers.IntegerField()
+    this_week_paid_payments = serializers.IntegerField()
+    this_month_paid_payments = serializers.IntegerField()

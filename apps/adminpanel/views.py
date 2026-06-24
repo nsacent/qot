@@ -1,4 +1,4 @@
-from django.db.models import Count
+from django.db.models import Count, Sum
 from rest_framework import generics, permissions, status
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -49,6 +49,23 @@ class AdminDashboardAPIView(APIView):
 
         paid_payments = payments.filter(status=Payment.STATUS_PAID)
 
+        now = timezone.now()
+        today = now.date()
+        week_start = today - timezone.timedelta(days=today.weekday())
+        month_start = today.replace(day=1)
+
+        today_paid = paid_payments.filter(
+            paid_at__date=today,
+        )
+
+        this_week_paid = paid_payments.filter(
+            paid_at__date__gte=week_start,
+        )
+
+        this_month_paid = paid_payments.filter(
+            paid_at__date__gte=month_start,
+        )
+
         total_revenue = paid_payments.aggregate(
             total=Sum("amount"),
         )["total"] or 0
@@ -62,6 +79,18 @@ class AdminDashboardAPIView(APIView):
         boost_listing_revenue = paid_payments.filter(
             purpose=Payment.PURPOSE_BOOST_LISTING,
         ).aggregate(
+            total=Sum("amount"),
+        )["total"] or 0
+
+        today_revenue = today_paid.aggregate(
+            total=Sum("amount"),
+        )["total"] or 0
+
+        this_week_revenue = this_week_paid.aggregate(
+            total=Sum("amount"),
+        )["total"] or 0
+
+        this_month_revenue = this_month_paid.aggregate(
             total=Sum("amount"),
         )["total"] or 0
 
@@ -115,6 +144,14 @@ class AdminDashboardAPIView(APIView):
             "total_revenue": total_revenue,
             "featured_listing_revenue": featured_listing_revenue,
             "boost_listing_revenue": boost_listing_revenue,
+
+            "today_revenue": today_revenue,
+            "this_week_revenue": this_week_revenue,
+            "this_month_revenue": this_month_revenue,
+
+            "today_paid_payments": today_paid.count(),
+            "this_week_paid_payments": this_week_paid.count(),
+            "this_month_paid_payments": this_month_paid.count(),
         }
 
         serializer = AdminDashboardSerializer(data)
