@@ -17,6 +17,9 @@ from .views import (
     AdminPromotionPackageListCreateAPIView,
     AdminPromotionPackageDetailAPIView,
     AdminCancelPaymentAPIView,
+    AdminSellerReviewListAPIView,
+    AdminHideSellerReviewAPIView,
+    AdminShowSellerReviewAPIView,
 )
 
 
@@ -47,4 +50,8 @@ urlpatterns = [
     path("packages/<int:pk>/", AdminPromotionPackageDetailAPIView.as_view(), name="package_detail"),
 
     path("payments/<int:pk>/cancel/", AdminCancelPaymentAPIView.as_view(), name="payment_cancel"),
+
+    path("reviews/", AdminSellerReviewListAPIView.as_view(), name="review_list"),
+    path("reviews/<int:pk>/hide/", AdminHideSellerReviewAPIView.as_view(), name="review_hide"),
+    path("reviews/<int:pk>/show/", AdminShowSellerReviewAPIView.as_view(), name="review_show"),
 ]

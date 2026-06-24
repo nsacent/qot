@@ -70,3 +70,35 @@ class SellerListingAnalyticsSerializer(serializers.Serializer):
     is_featured = serializers.BooleanField()
     created_at = serializers.DateTimeField()
     expires_at = serializers.DateTimeField(allow_null=True)
+
+
+class SellerDashboardListingMiniSerializer(serializers.Serializer):
+    id = serializers.IntegerField()
+    title = serializers.CharField()
+    status = serializers.CharField()
+    price = serializers.DecimalField(max_digits=12, decimal_places=2)
+    views_count = serializers.IntegerField()
+    favorites_count = serializers.IntegerField()
+    is_featured = serializers.BooleanField()
+    created_at = serializers.DateTimeField()
+    expires_at = serializers.DateTimeField(allow_null=True)
+
+
+class SellerDashboardSummarySerializer(serializers.Serializer):
+    total_listings = serializers.IntegerField()
+    active_listings = serializers.IntegerField()
+    pending_listings = serializers.IntegerField()
+    sold_listings = serializers.IntegerField()
+    expired_listings = serializers.IntegerField()
+    unavailable_listings = serializers.IntegerField()
+
+    total_views = serializers.IntegerField()
+    total_favorites = serializers.IntegerField()
+    total_chat_threads = serializers.IntegerField()
+
+    active_featured_listings = serializers.IntegerField()
+    listings_needing_renewal = serializers.IntegerField()
+
+    best_listing = SellerDashboardListingMiniSerializer(allow_null=True)
+    weakest_listing = SellerDashboardListingMiniSerializer(allow_null=True)
+    recent_listings = SellerDashboardListingMiniSerializer(many=True)

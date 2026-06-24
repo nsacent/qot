@@ -6,12 +6,13 @@ from rest_framework.views import APIView
 from apps.common.permissions import IsNotBanned, IsVerifiedUser
 from apps.listings.models import Listing
 
-from .serializers import SellerListingSerializer
-
-
 from apps.chats.models import ChatThread
 
+from django.utils import timezone
+
 from .serializers import (
+    SellerDashboardSummarySerializer,
+    SellerListingSerializer,
     SellerAnalyticsSummarySerializer,
     SellerListingAnalyticsSerializer,
 )
@@ -24,6 +25,22 @@ class SellerDashboardAPIView(APIView):
         IsVerifiedUser,
     ]
 
+    def listing_to_dict(self, listing):
+        if not listing:
+            return None
+
+        return {
+            "id": listing.id,
+            "title": listing.title,
+            "status": listing.status,
+            "price": listing.price,
+            "views_count": listing.views_count,
+            "favorites_count": listing.favorites_count,
+            "is_featured": listing.is_featured,
+            "created_at": listing.created_at,
+            "expires_at": listing.expires_at,
+        }
+
     def get(self, request):
         listings = Listing.objects.filter(
             seller=request.user,
@@ -31,24 +48,70 @@ class SellerDashboardAPIView(APIView):
             status=Listing.STATUS_DELETED,
         )
 
+        active_listings = listings.filter(status=Listing.STATUS_ACTIVE)
+
+        total_chat_threads = ChatThread.objects.filter(
+            listing__seller=request.user,
+        ).count()
+
+        best_listing = (
+            listings
+            .order_by("-views_count", "-favorites_count", "-created_at")
+            .first()
+        )
+
+        weakest_listing = (
+            active_listings
+            .order_by("views_count", "favorites_count", "created_at")
+            .first()
+        )
+
+        recent_listings = listings.order_by("-created_at")[:5]
+
         data = {
-            "listings": {
-                "total": listings.count(),
-                "active": listings.filter(status=Listing.STATUS_ACTIVE).count(),
-                "pending": listings.filter(status=Listing.STATUS_PENDING).count(),
-                "rejected": listings.filter(status=Listing.STATUS_REJECTED).count(),
-                "sold": listings.filter(status=Listing.STATUS_SOLD).count(),
-                "expired": listings.filter(status=Listing.STATUS_EXPIRED).count(),
-                "draft": listings.filter(status=Listing.STATUS_DRAFT).count(),
-            },
-            "performance": {
-                "total_views": listings.aggregate(total=Sum("views_count"))["total"] or 0,
-                "total_favorites": listings.aggregate(total=Sum("favorites_count"))["total"] or 0,
-            },
+            "total_listings": listings.count(),
+            "active_listings": active_listings.count(),
+            "pending_listings": listings.filter(
+                status=Listing.STATUS_PENDING,
+            ).count(),
+            "sold_listings": listings.filter(
+                status=Listing.STATUS_SOLD,
+            ).count(),
+            "expired_listings": listings.filter(
+                status=Listing.STATUS_EXPIRED,
+            ).count(),
+            "unavailable_listings": listings.filter(
+                status=Listing.STATUS_UNAVAILABLE,
+            ).count(),
+
+            "total_views": listings.aggregate(
+                total=Sum("views_count"),
+            )["total"] or 0,
+            "total_favorites": listings.aggregate(
+                total=Sum("favorites_count"),
+            )["total"] or 0,
+            "total_chat_threads": total_chat_threads,
+
+            "active_featured_listings": active_listings.filter(
+                is_featured=True,
+                featured_until__gt=timezone.now(),
+            ).count(),
+
+            "listings_needing_renewal": listings.filter(
+                status=Listing.STATUS_EXPIRED,
+            ).count(),
+
+            "best_listing": self.listing_to_dict(best_listing),
+            "weakest_listing": self.listing_to_dict(weakest_listing),
+            "recent_listings": [
+                self.listing_to_dict(listing)
+                for listing in recent_listings
+            ],
         }
 
-        return Response(data, status=status.HTTP_200_OK)
+        serializer = SellerDashboardSummarySerializer(data)
 
+        return Response(serializer.data, status=status.HTTP_200_OK)
 
 class SellerListingListAPIView(generics.ListAPIView):
     serializer_class = SellerListingSerializer
