@@ -1,5 +1,5 @@
 from django.db import transaction
-from django.db.models import Q
+from django.db.models import Q, Count
 from django.utils import timezone
 
 from rest_framework import generics, permissions, status
@@ -53,8 +53,18 @@ class ChatThreadListCreateAPIView(generics.ListCreateAPIView):
                 "seller",
             )
             .prefetch_related("listing__images")
+            .annotate(
+                unread_count_value=Count(
+                    "messages",
+                    filter=(
+                        Q(messages__is_read=False)
+                        & ~Q(messages__sender=self.request.user)
+                    ),
+                )
+            )
             .order_by("-last_message_at", "-created_at")
         )
+    
 
     @transaction.atomic
     def create(self, request, *args, **kwargs):

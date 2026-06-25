@@ -39,6 +39,7 @@ class ChatThreadSerializer(serializers.ModelSerializer):
     listing = ListingListSerializer(read_only=True)
     buyer_name = serializers.CharField(source="buyer.full_name", read_only=True)
     seller_name = serializers.CharField(source="seller.full_name", read_only=True)
+    unread_count = serializers.SerializerMethodField()
 
     other_user_name = serializers.SerializerMethodField()
     other_user_phone = serializers.SerializerMethodField()
@@ -53,6 +54,7 @@ class ChatThreadSerializer(serializers.ModelSerializer):
             "buyer_name",
             "seller",
             "seller_name",
+            "unread_count",
             "other_user_name",
             "other_user_phone",
             "last_message",
@@ -96,6 +98,21 @@ class ChatThreadSerializer(serializers.ModelSerializer):
             return obj.buyer_unread_count
 
         return obj.seller_unread_count
+    
+    def get_unread_count(self, obj):
+        if hasattr(obj, "unread_count_value"):
+            return obj.unread_count_value
+
+        request = self.context.get("request")
+
+        if not request or not request.user.is_authenticated:
+            return 0
+
+        return obj.messages.filter(
+            is_read=False,
+        ).exclude(
+            sender=request.user,
+        ).count()
 
 
 class ChatThreadCreateSerializer(serializers.Serializer):
