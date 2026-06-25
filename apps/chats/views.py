@@ -167,11 +167,15 @@ class ChatMessageListCreateAPIView(generics.ListCreateAPIView):
         return ChatMessageSerializer
 
     def get_thread(self):
-        return ChatThread.objects.get(
-            pk=self.kwargs["thread_id"],
-            is_active=True,
+        return (
+            ChatThread.objects
+            .select_related("buyer", "seller", "listing")
+            .get(
+                pk=self.kwargs["thread_id"],
+                is_active=True,
+            )
         )
-
+    
     def get_queryset(self):
         thread = self.get_thread()
 
@@ -182,6 +186,7 @@ class ChatMessageListCreateAPIView(generics.ListCreateAPIView):
             ChatMessage.objects
             .filter(thread=thread)
             .select_related("sender")
+            .prefetch_related("attachments")
             .order_by("created_at")
         )
 
@@ -202,6 +207,21 @@ class ChatMessageListCreateAPIView(generics.ListCreateAPIView):
                 {
                     "detail": "You do not have permission to send messages in this thread."
                 },
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        
+        other_user = get_other_chat_participant(thread, request.user)
+
+        is_blocked = ChatBlock.objects.filter(
+            blocker=other_user,
+            blocked_user=request.user,
+            thread=thread,
+            is_active=True,
+        ).exists()
+
+        if is_blocked:
+            return Response(
+                {"detail": "You cannot send messages in this thread."},
                 status=status.HTTP_403_FORBIDDEN,
             )
 
