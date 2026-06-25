@@ -18,6 +18,8 @@ from apps.payments.models import Payment, PromotionPackage
 
 from apps.reviews.models import SellerReview
 
+from apps.chats.models import ChatReport
+
 from .serializers import (
     AdminUserSerializer,
     AdminListingSerializer,
@@ -30,7 +32,9 @@ from .serializers import (
     AdminPromotionPackageSerializer,
     AdminDashboardSerializer,
     AdminCancelPaymentSerializer,
-    AdminSellerReviewSerializer
+    AdminSellerReviewSerializer,
+    AdminChatReportSerializer,
+    ResolveChatReportSerializer,
 )
 
 from apps.notifications.services import (
@@ -910,5 +914,151 @@ class AdminShowSellerReviewAPIView(APIView):
         )
 
 
+class AdminChatReportListAPIView(generics.ListAPIView):
+    serializer_class = AdminChatReportSerializer
+    permission_classes = [
+        permissions.IsAuthenticated,
+        IsAdminOrModerator,
+    ]
 
+    def get_queryset(self):
+        queryset = (
+            ChatReport.objects
+            .select_related(
+                "thread",
+                "thread__listing",
+                "reporter",
+                "reported_user",
+                "resolved_by",
+            )
+            .order_by("-created_at")
+        )
+
+        search = self.request.query_params.get("search")
+        reason = self.request.query_params.get("reason")
+        is_resolved = self.request.query_params.get("is_resolved")
+        reporter = self.request.query_params.get("reporter")
+        reported_user = self.request.query_params.get("reported_user")
+        thread = self.request.query_params.get("thread")
+        listing = self.request.query_params.get("listing")
+        date_from = self.request.query_params.get("date_from")
+        date_to = self.request.query_params.get("date_to")
+
+        if search:
+            queryset = queryset.filter(
+                Q(description__icontains=search)
+                | Q(reporter__full_name__icontains=search)
+                | Q(reporter__phone__icontains=search)
+                | Q(reported_user__full_name__icontains=search)
+                | Q(reported_user__phone__icontains=search)
+                | Q(thread__listing__title__icontains=search)
+            )
+
+        if reason:
+            queryset = queryset.filter(reason=reason)
+
+        if is_resolved == "true":
+            queryset = queryset.filter(is_resolved=True)
+
+        if is_resolved == "false":
+            queryset = queryset.filter(is_resolved=False)
+
+        if reporter:
+            queryset = queryset.filter(reporter_id=reporter)
+
+        if reported_user:
+            queryset = queryset.filter(reported_user_id=reported_user)
+
+        if thread:
+            queryset = queryset.filter(thread_id=thread)
+
+        if listing:
+            queryset = queryset.filter(thread__listing_id=listing)
+
+        if date_from:
+            queryset = queryset.filter(created_at__date__gte=date_from)
+
+        if date_to:
+            queryset = queryset.filter(created_at__date__lte=date_to)
+
+        return queryset.distinct()
+
+
+class AdminChatReportDetailAPIView(generics.RetrieveAPIView):
+    serializer_class = AdminChatReportSerializer
+    permission_classes = [
+        permissions.IsAuthenticated,
+        IsAdminOrModerator,
+    ]
+
+    queryset = (
+        ChatReport.objects
+        .select_related(
+            "thread",
+            "thread__listing",
+            "reporter",
+            "reported_user",
+            "resolved_by",
+        )
+    )
+
+
+class ResolveChatReportAPIView(APIView):
+    permission_classes = [
+        permissions.IsAuthenticated,
+        IsAdminOrModerator,
+    ]
+
+    def post(self, request, pk):
+        try:
+            report = ChatReport.objects.select_related(
+                "thread",
+                "thread__listing",
+                "reporter",
+                "reported_user",
+                "resolved_by",
+            ).get(pk=pk)
+        except ChatReport.DoesNotExist:
+            return Response(
+                {"detail": "Chat report not found."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        if report.is_resolved:
+            return Response(
+                {"detail": "This chat report is already resolved."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        serializer = ResolveChatReportSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        note = serializer.validated_data.get("note", "")
+
+        if note:
+            if report.description:
+                report.description = f"{report.description}\n\nAdmin note: {note}"
+            else:
+                report.description = f"Admin note: {note}"
+
+        report.is_resolved = True
+        report.resolved_by = request.user
+        report.resolved_at = timezone.now()
+
+        report.save(
+            update_fields=[
+                "description",
+                "is_resolved",
+                "resolved_by",
+                "resolved_at",
+            ]
+        )
+
+        return Response(
+            {
+                "message": "Chat report resolved successfully.",
+                "report": AdminChatReportSerializer(report).data,
+            },
+            status=status.HTTP_200_OK,
+        )
 

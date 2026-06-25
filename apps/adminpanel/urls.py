@@ -20,6 +20,9 @@ from .views import (
     AdminSellerReviewListAPIView,
     AdminHideSellerReviewAPIView,
     AdminShowSellerReviewAPIView,
+    AdminChatReportListAPIView,
+    AdminChatReportDetailAPIView,
+    ResolveChatReportAPIView,
 )
 
 
@@ -54,4 +57,8 @@ urlpatterns = [
     path("reviews/", AdminSellerReviewListAPIView.as_view(), name="review_list"),
     path("reviews/<int:pk>/hide/", AdminHideSellerReviewAPIView.as_view(), name="review_hide"),
     path("reviews/<int:pk>/show/", AdminShowSellerReviewAPIView.as_view(), name="review_show"),
+
+    path("chat-reports/", AdminChatReportListAPIView.as_view(), name="chat_report_list"),
+    path("chat-reports/<int:pk>/", AdminChatReportDetailAPIView.as_view(), name="chat_report_detail"),
+    path("chat-reports/<int:pk>/resolve/", ResolveChatReportAPIView.as_view(), name="chat_report_resolve"),
 ]

@@ -3,6 +3,7 @@ from rest_framework import serializers
 from apps.accounts.models import User
 from apps.listings.models import Listing
 from apps.reviews.models import SellerReview
+from apps.chats.models import ChatReport
 
 from apps.payments.models import Payment, PromotionPackage
 
@@ -220,3 +221,42 @@ class AdminSellerReviewSerializer(serializers.ModelSerializer):
             "updated_at",
         ]
         read_only_fields = fields
+
+
+class AdminChatReportSerializer(serializers.ModelSerializer):
+    reporter_name = serializers.CharField(source="reporter.full_name", read_only=True)
+    reporter_phone = serializers.CharField(source="reporter.phone", read_only=True)
+    reported_user_name = serializers.CharField(source="reported_user.full_name", read_only=True)
+    reported_user_phone = serializers.CharField(source="reported_user.phone", read_only=True)
+    listing_id = serializers.IntegerField(source="thread.listing.id", read_only=True)
+    listing_title = serializers.CharField(source="thread.listing.title", read_only=True)
+
+    class Meta:
+        model = ChatReport
+        fields = [
+            "id",
+            "thread",
+            "listing_id",
+            "listing_title",
+            "reporter",
+            "reporter_name",
+            "reporter_phone",
+            "reported_user",
+            "reported_user_name",
+            "reported_user_phone",
+            "reason",
+            "description",
+            "is_resolved",
+            "resolved_by",
+            "resolved_at",
+            "created_at",
+        ]
+        read_only_fields = fields
+
+
+class ResolveChatReportSerializer(serializers.Serializer):
+    note = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        max_length=1000,
+    )
