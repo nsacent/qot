@@ -6,19 +6,22 @@ from rest_framework import generics, permissions, status
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from .models import ChatThread, ChatMessage
+from .models import ChatThread, ChatMessage, ChatMessageAttachment
 from .permissions import IsThreadParticipant
 from .serializers import (
     ChatThreadSerializer,
     ChatThreadCreateSerializer,
     ChatMessageSerializer,
     ChatMessageCreateSerializer,
+    ChatAttachmentUploadSerializer,
 )
 
 from apps.notifications.services import create_message_notification
 
-
 from apps.common.permissions import IsNotBanned, IsVerifiedUser
+
+from rest_framework.parsers import MultiPartParser, FormParser
+
 
 class ChatThreadListCreateAPIView(generics.ListCreateAPIView):
     def get_permissions(self):
@@ -262,4 +265,80 @@ class ChatMarkReadAPIView(APIView):
                 "message": "Messages marked as read."
             },
             status=status.HTTP_200_OK,
+        )
+    
+class ChatAttachmentUploadAPIView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+    parser_classes = [MultiPartParser, FormParser]
+
+    def get_file_type(self, file_name):
+        file_name = file_name.lower()
+
+        if file_name.endswith((".jpg", ".jpeg", ".png", ".webp")):
+            return ChatMessageAttachment.FILE_TYPE_IMAGE
+
+        if file_name.endswith((".pdf", ".doc", ".docx")):
+            return ChatMessageAttachment.FILE_TYPE_DOCUMENT
+
+        return ChatMessageAttachment.FILE_TYPE_OTHER
+
+    @transaction.atomic
+    def post(self, request, thread_id):
+        try:
+            thread = ChatThread.objects.get(
+                id=thread_id,
+                is_active=True,
+            )
+        except ChatThread.DoesNotExist:
+            return Response(
+                {"detail": "Chat thread not found."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        if request.user not in [thread.buyer, thread.seller]:
+            return Response(
+                {"detail": "You are not allowed to send messages in this thread."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        serializer = ChatAttachmentUploadSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        uploaded_file = serializer.validated_data["file"]
+        message_text = serializer.validated_data.get("message", "")
+
+        file_type = self.get_file_type(uploaded_file.name)
+
+        message_type = ChatMessage.TYPE_TEXT
+
+        if file_type == ChatMessageAttachment.FILE_TYPE_IMAGE:
+            message_type = ChatMessage.TYPE_IMAGE
+
+        chat_message = ChatMessage.objects.create(
+            thread=thread,
+            sender=request.user,
+            body=message_text,
+            message_type=message_type,
+)
+
+        ChatMessageAttachment.objects.create(
+            message=chat_message,
+            file=uploaded_file,
+            file_type=file_type,
+            original_name=uploaded_file.name,
+            size=uploaded_file.size,
+        )
+
+        thread.last_message_at = timezone.now()
+        thread.save(update_fields=["last_message_at"])
+
+        return Response(
+            {
+                "message": "Attachment sent successfully.",
+                "chat_message": ChatMessageSerializer(
+                    chat_message,
+                    context={"request": request},
+                ).data,
+            },
+            status=status.HTTP_201_CREATED,
         )

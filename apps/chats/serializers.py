@@ -3,12 +3,41 @@ from rest_framework import serializers
 from apps.listings.models import Listing
 from apps.listings.serializers import ListingListSerializer
 
-from .models import ChatThread, ChatMessage
+from .models import ChatThread, ChatMessage, ChatMessageAttachment
 
+
+class ChatMessageAttachmentSerializer(serializers.ModelSerializer):
+    file_url = serializers.SerializerMethodField()
+
+    class Meta:
+        model = ChatMessageAttachment
+        fields = [
+            "id",
+            "file",
+            "file_url",
+            "file_type",
+            "original_name",
+            "size",
+            "created_at",
+        ]
+        read_only_fields = fields
+
+    def get_file_url(self, obj):
+        request = self.context.get("request")
+
+        if not obj.file:
+            return None
+
+        if request:
+            return request.build_absolute_uri(obj.file.url)
+
+        return obj.file.url
+    
 
 class ChatMessageSerializer(serializers.ModelSerializer):
     sender_name = serializers.CharField(source="sender.full_name", read_only=True)
     sender_phone = serializers.CharField(source="sender.phone", read_only=True)
+    attachments = ChatMessageAttachmentSerializer(many=True, read_only=True)
 
     class Meta:
         model = ChatMessage
@@ -21,6 +50,7 @@ class ChatMessageSerializer(serializers.ModelSerializer):
             "message_type",
             "body",
             "image",
+            "attachments",
             "is_read",
             "read_at",
             "created_at",
@@ -164,3 +194,41 @@ class ChatMessageCreateSerializer(serializers.ModelSerializer):
             )
 
         return attrs
+
+
+
+class ChatAttachmentUploadSerializer(serializers.Serializer):
+    message = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        max_length=1000,
+    )
+
+    file = serializers.FileField()
+
+    def validate_file(self, file):
+        max_size = 10 * 1024 * 1024
+
+        if file.size > max_size:
+            raise serializers.ValidationError(
+                "Attachment size cannot exceed 10MB."
+            )
+
+        allowed_extensions = [
+            ".jpg",
+            ".jpeg",
+            ".png",
+            ".webp",
+            ".pdf",
+            ".doc",
+            ".docx",
+        ]
+
+        file_name = file.name.lower()
+
+        if not any(file_name.endswith(ext) for ext in allowed_extensions):
+            raise serializers.ValidationError(
+                "Only JPG, PNG, WEBP, PDF, DOC, and DOCX files are allowed."
+            )
+
+        return file

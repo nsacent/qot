@@ -102,3 +102,40 @@ class ChatMessage(models.Model):
             self.is_read = True
             self.read_at = timezone.now()
             self.save(update_fields=["is_read", "read_at"])
+
+
+class ChatMessageAttachment(models.Model):
+    FILE_TYPE_IMAGE = "image"
+    FILE_TYPE_DOCUMENT = "document"
+    FILE_TYPE_OTHER = "other"
+
+    FILE_TYPE_CHOICES = [
+        (FILE_TYPE_IMAGE, "Image"),
+        (FILE_TYPE_DOCUMENT, "Document"),
+        (FILE_TYPE_OTHER, "Other"),
+    ]
+
+    message = models.ForeignKey(
+        ChatMessage,
+        on_delete=models.CASCADE,
+        related_name="attachments",
+    )
+
+    file = models.FileField(upload_to="chats/attachments/")
+
+    file_type = models.CharField(
+        max_length=20,
+        choices=FILE_TYPE_CHOICES,
+        default=FILE_TYPE_OTHER,
+    )
+
+    original_name = models.CharField(max_length=255, blank=True)
+    size = models.PositiveIntegerField(default=0)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["created_at"]
+
+    def __str__(self):
+        return self.original_name or str(self.file)
