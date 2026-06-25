@@ -6,14 +6,26 @@ from rest_framework import generics, permissions, status
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from .models import ChatThread, ChatMessage, ChatMessageAttachment
+from .models import (
+    ChatThread,
+    ChatMessage,
+    ChatMessageAttachment,
+    ChatBlock,
+    ChatReport,
+)
+
 from .permissions import IsThreadParticipant
+
 from .serializers import (
     ChatThreadSerializer,
     ChatThreadCreateSerializer,
     ChatMessageSerializer,
     ChatMessageCreateSerializer,
     ChatAttachmentUploadSerializer,
+    ChatBlockCreateSerializer,
+    ChatBlockSerializer,
+    ChatReportCreateSerializer,
+    ChatReportSerializer,
 )
 
 from apps.notifications.services import create_message_notification
@@ -21,6 +33,15 @@ from apps.notifications.services import create_message_notification
 from apps.common.permissions import IsNotBanned, IsVerifiedUser
 
 from rest_framework.parsers import MultiPartParser, FormParser
+
+def get_other_chat_participant(thread, user):
+    if thread.buyer_id == user.id:
+        return thread.seller
+
+    if thread.seller_id == user.id:
+        return thread.buyer
+
+    return None
 
 
 class ChatThreadListCreateAPIView(generics.ListCreateAPIView):
@@ -301,6 +322,21 @@ class ChatAttachmentUploadAPIView(APIView):
                 status=status.HTTP_403_FORBIDDEN,
             )
 
+        other_user = get_other_chat_participant(thread, request.user)
+
+        is_blocked = ChatBlock.objects.filter(
+            blocker=other_user,
+            blocked_user=request.user,
+            thread=thread,
+            is_active=True,
+        ).exists()
+
+        if is_blocked:
+            return Response(
+                {"detail": "You cannot send messages in this thread."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
         serializer = ChatAttachmentUploadSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
@@ -339,6 +375,153 @@ class ChatAttachmentUploadAPIView(APIView):
                     chat_message,
                     context={"request": request},
                 ).data,
+            },
+            status=status.HTTP_201_CREATED,
+        )
+    
+
+
+
+class ChatBlockAPIView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request, thread_id):
+        try:
+            thread = ChatThread.objects.select_related(
+                "buyer",
+                "seller",
+            ).get(
+                id=thread_id,
+                is_active=True,
+            )
+        except ChatThread.DoesNotExist:
+            return Response(
+                {"detail": "Chat thread not found."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        blocked_user = get_other_chat_participant(thread, request.user)
+
+        if not blocked_user:
+            return Response(
+                {"detail": "You are not part of this chat thread."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        serializer = ChatBlockCreateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        block, created = ChatBlock.objects.update_or_create(
+            blocker=request.user,
+            blocked_user=blocked_user,
+            thread=thread,
+            defaults={
+                "reason": serializer.validated_data.get("reason", ""),
+                "is_active": True,
+            },
+        )
+
+        return Response(
+            {
+                "message": "User blocked successfully.",
+                "block": ChatBlockSerializer(block).data,
+            },
+            status=status.HTTP_200_OK,
+        )
+
+
+class ChatUnblockAPIView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request, thread_id):
+        try:
+            thread = ChatThread.objects.select_related(
+                "buyer",
+                "seller",
+            ).get(
+                id=thread_id,
+                is_active=True,
+            )
+        except ChatThread.DoesNotExist:
+            return Response(
+                {"detail": "Chat thread not found."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        blocked_user = get_other_chat_participant(thread, request.user)
+
+        if not blocked_user:
+            return Response(
+                {"detail": "You are not part of this chat thread."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        block = ChatBlock.objects.filter(
+            blocker=request.user,
+            blocked_user=blocked_user,
+            thread=thread,
+            is_active=True,
+        ).first()
+
+        if not block:
+            return Response(
+                {"detail": "This user is not currently blocked."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        block.is_active = False
+        block.save(update_fields=["is_active", "updated_at"])
+
+        return Response(
+            {
+                "message": "User unblocked successfully.",
+                "block": ChatBlockSerializer(block).data,
+            },
+            status=status.HTTP_200_OK,
+        )
+
+
+class ChatReportAPIView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request, thread_id):
+        try:
+            thread = ChatThread.objects.select_related(
+                "buyer",
+                "seller",
+            ).get(
+                id=thread_id,
+                is_active=True,
+            )
+        except ChatThread.DoesNotExist:
+            return Response(
+                {"detail": "Chat thread not found."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        reported_user = get_other_chat_participant(thread, request.user)
+
+        if not reported_user:
+            return Response(
+                {"detail": "You are not part of this chat thread."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        serializer = ChatReportCreateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        report = ChatReport.objects.create(
+            thread=thread,
+            reporter=request.user,
+            reported_user=reported_user,
+            reason=serializer.validated_data["reason"],
+            description=serializer.validated_data.get("description", ""),
+        )
+
+        return Response(
+            {
+                "message": "Chat reported successfully.",
+                "report": ChatReportSerializer(report).data,
             },
             status=status.HTTP_201_CREATED,
         )

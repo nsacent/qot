@@ -6,6 +6,9 @@ from .views import (
     ChatMessageListCreateAPIView,
     ChatMarkReadAPIView,
     ChatAttachmentUploadAPIView,
+    ChatBlockAPIView,
+    ChatUnblockAPIView,
+    ChatReportAPIView,
 )
 
 
@@ -30,4 +33,7 @@ urlpatterns = [
         ChatAttachmentUploadAPIView.as_view(),
         name="chat_attachment_upload",
     ),
+    path("threads/<int:thread_id>/block/", ChatBlockAPIView.as_view(), name="chat_block"),
+    path("threads/<int:thread_id>/unblock/", ChatUnblockAPIView.as_view(), name="chat_unblock"),
+    path("threads/<int:thread_id>/report/", ChatReportAPIView.as_view(), name="chat_report"),
 ]

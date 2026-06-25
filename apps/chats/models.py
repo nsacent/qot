@@ -139,3 +139,112 @@ class ChatMessageAttachment(models.Model):
 
     def __str__(self):
         return self.original_name or str(self.file)
+    
+
+
+class ChatBlock(models.Model):
+    blocker = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="chat_blocks_made",
+    )
+
+    blocked_user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="chat_blocks_received",
+    )
+
+    thread = models.ForeignKey(
+        ChatThread,
+        on_delete=models.CASCADE,
+        related_name="blocks",
+        null=True,
+        blank=True,
+    )
+
+    reason = models.TextField(blank=True)
+
+    is_active = models.BooleanField(default=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        unique_together = ["blocker", "blocked_user", "thread"]
+        ordering = ["-created_at"]
+        indexes = [
+            models.Index(fields=["blocker", "blocked_user"]),
+            models.Index(fields=["thread", "is_active"]),
+        ]
+
+    def __str__(self):
+        return f"{self.blocker} blocked {self.blocked_user}"
+
+
+class ChatReport(models.Model):
+    REASON_SPAM = "spam"
+    REASON_SCAM = "scam"
+    REASON_ABUSE = "abuse"
+    REASON_HARASSMENT = "harassment"
+    REASON_OTHER = "other"
+
+    REASON_CHOICES = [
+        (REASON_SPAM, "Spam"),
+        (REASON_SCAM, "Scam"),
+        (REASON_ABUSE, "Abuse"),
+        (REASON_HARASSMENT, "Harassment"),
+        (REASON_OTHER, "Other"),
+    ]
+
+    thread = models.ForeignKey(
+        ChatThread,
+        on_delete=models.CASCADE,
+        related_name="reports",
+    )
+
+    reporter = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="chat_reports_made",
+    )
+
+    reported_user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="chat_reports_received",
+    )
+
+    reason = models.CharField(
+        max_length=50,
+        choices=REASON_CHOICES,
+        default=REASON_OTHER,
+    )
+
+    description = models.TextField(blank=True)
+
+    is_resolved = models.BooleanField(default=False)
+
+    resolved_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        related_name="resolved_chat_reports",
+        null=True,
+        blank=True,
+    )
+
+    resolved_at = models.DateTimeField(null=True, blank=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        indexes = [
+            models.Index(fields=["thread", "-created_at"]),
+            models.Index(fields=["reporter", "-created_at"]),
+            models.Index(fields=["reported_user", "-created_at"]),
+            models.Index(fields=["is_resolved", "-created_at"]),
+        ]
+
+    def __str__(self):
+        return f"{self.reporter} reported {self.reported_user}"

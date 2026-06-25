@@ -3,8 +3,13 @@ from rest_framework import serializers
 from apps.listings.models import Listing
 from apps.listings.serializers import ListingListSerializer
 
-from .models import ChatThread, ChatMessage, ChatMessageAttachment
-
+from .models import (
+    ChatThread,
+    ChatMessage,
+    ChatMessageAttachment,
+    ChatBlock,
+    ChatReport,
+)
 
 class ChatMessageAttachmentSerializer(serializers.ModelSerializer):
     file_url = serializers.SerializerMethodField()
@@ -232,3 +237,84 @@ class ChatAttachmentUploadSerializer(serializers.Serializer):
             )
 
         return file
+    
+
+class ChatBlockSerializer(serializers.ModelSerializer):
+    blocked_user_name = serializers.CharField(
+        source="blocked_user.full_name",
+        read_only=True,
+    )
+
+    class Meta:
+        model = ChatBlock
+        fields = [
+            "id",
+            "blocker",
+            "blocked_user",
+            "blocked_user_name",
+            "thread",
+            "reason",
+            "is_active",
+            "created_at",
+            "updated_at",
+        ]
+        read_only_fields = [
+            "id",
+            "blocker",
+            "blocked_user",
+            "blocked_user_name",
+            "thread",
+            "is_active",
+            "created_at",
+            "updated_at",
+        ]
+
+
+class ChatBlockCreateSerializer(serializers.Serializer):
+    reason = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        max_length=1000,
+    )
+
+
+class ChatReportCreateSerializer(serializers.Serializer):
+    reason = serializers.ChoiceField(
+        choices=ChatReport.REASON_CHOICES,
+        default=ChatReport.REASON_OTHER,
+    )
+
+    description = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        max_length=2000,
+    )
+
+
+class ChatReportSerializer(serializers.ModelSerializer):
+    reporter_name = serializers.CharField(
+        source="reporter.full_name",
+        read_only=True,
+    )
+    reported_user_name = serializers.CharField(
+        source="reported_user.full_name",
+        read_only=True,
+    )
+
+    class Meta:
+        model = ChatReport
+        fields = [
+            "id",
+            "thread",
+            "reporter",
+            "reporter_name",
+            "reported_user",
+            "reported_user_name",
+            "reason",
+            "description",
+            "is_resolved",
+            "resolved_by",
+            "resolved_at",
+            "created_at",
+        ]
+        read_only_fields = fields
