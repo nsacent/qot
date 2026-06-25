@@ -49,3 +49,37 @@ class SavedSearch(models.Model):
 
     def __str__(self):
         return f"{self.user} - {self.name}"
+    
+
+
+class SavedSearchAlertLog(models.Model):
+    saved_search = models.ForeignKey(
+        SavedSearch,
+        on_delete=models.CASCADE,
+        related_name="alert_logs",
+    )
+
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="saved_search_alert_logs",
+    )
+
+    listing = models.ForeignKey(
+        "listings.Listing",
+        on_delete=models.CASCADE,
+        related_name="saved_search_alert_logs",
+    )
+
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        unique_together = ["saved_search", "listing", "user"]
+        indexes = [
+            models.Index(fields=["saved_search", "listing"]),
+            models.Index(fields=["user", "-created_at"]),
+        ]
+
+    def __str__(self):
+        return f"{self.user} - {self.saved_search} - {self.listing}"

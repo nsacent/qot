@@ -1,7 +1,7 @@
 from decimal import Decimal, InvalidOperation
 
 from apps.notifications.services import create_saved_search_match_notification
-from apps.searches.models import SavedSearch
+from apps.searches.models import SavedSearch, SavedSearchAlertLog
 
 
 def get_filter_value(filters, key):
@@ -33,21 +33,26 @@ def listing_matches_saved_search(listing, saved_search):
     min_price = get_filter_value(filters, "min_price")
     max_price = get_filter_value(filters, "max_price")
 
-    if category:
+    if category and listing.category:
         category_text = str(category)
 
-        if (
-            str(listing.category_id) != category_text
-            and listing.category.slug != category_text
-            and (
-                not listing.category.parent
-                or str(listing.category.parent_id) != category_text
-                and listing.category.parent.slug != category_text
+        category_matches = (
+            str(listing.category_id) == category_text
+            or listing.category.slug == category_text
+        )
+
+        parent_matches = False
+
+        if listing.category.parent:
+            parent_matches = (
+                str(listing.category.parent_id) == category_text
+                or listing.category.parent.slug == category_text
             )
-        ):
+
+        if not category_matches and not parent_matches:
             return False
 
-    if city:
+    if city and listing.city:
         city_text = str(city)
 
         if str(listing.city_id) != city_text and listing.city.slug != city_text:
@@ -90,12 +95,28 @@ def notify_saved_search_matches_for_listing(listing):
         if saved_search.user_id == listing.seller_id:
             continue
 
+        already_sent = SavedSearchAlertLog.objects.filter(
+            saved_search=saved_search,
+            user=saved_search.user,
+            listing=listing,
+        ).exists()
+
+        if already_sent:
+            continue
+
         if listing_matches_saved_search(listing, saved_search):
             create_saved_search_match_notification(
                 user=saved_search.user,
                 listing=listing,
                 saved_search=saved_search,
             )
+
+            SavedSearchAlertLog.objects.create(
+                saved_search=saved_search,
+                user=saved_search.user,
+                listing=listing,
+            )
+
             sent_count += 1
 
     return sent_count
