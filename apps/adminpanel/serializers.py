@@ -3,9 +3,10 @@ from rest_framework import serializers
 from apps.accounts.models import User
 from apps.listings.models import Listing
 from apps.reviews.models import SellerReview
-from apps.chats.models import ChatReport
 
 from apps.payments.models import Payment, PromotionPackage
+
+from apps.chats.models import ChatReport, ChatBlock
 
 class AdminUserSerializer(serializers.ModelSerializer):
     class Meta:
@@ -260,3 +261,34 @@ class ResolveChatReportSerializer(serializers.Serializer):
         allow_blank=True,
         max_length=1000,
     )
+
+
+class AdminChatBlockSerializer(serializers.ModelSerializer):
+    blocker_name = serializers.CharField(source="blocker.full_name", read_only=True)
+    blocker_phone = serializers.CharField(source="blocker.phone", read_only=True)
+
+    blocked_user_name = serializers.CharField(source="blocked_user.full_name", read_only=True)
+    blocked_user_phone = serializers.CharField(source="blocked_user.phone", read_only=True)
+
+    listing_id = serializers.IntegerField(source="thread.listing.id", read_only=True)
+    listing_title = serializers.CharField(source="thread.listing.title", read_only=True)
+
+    class Meta:
+        model = ChatBlock
+        fields = [
+            "id",
+            "blocker",
+            "blocker_name",
+            "blocker_phone",
+            "blocked_user",
+            "blocked_user_name",
+            "blocked_user_phone",
+            "thread",
+            "listing_id",
+            "listing_title",
+            "reason",
+            "is_active",
+            "created_at",
+            "updated_at",
+        ]
+        read_only_fields = fields

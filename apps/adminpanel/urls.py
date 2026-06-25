@@ -23,6 +23,7 @@ from .views import (
     AdminChatReportListAPIView,
     AdminChatReportDetailAPIView,
     ResolveChatReportAPIView,
+    AdminChatBlockListAPIView,
 )
 
 
@@ -61,4 +62,5 @@ urlpatterns = [
     path("chat-reports/", AdminChatReportListAPIView.as_view(), name="chat_report_list"),
     path("chat-reports/<int:pk>/", AdminChatReportDetailAPIView.as_view(), name="chat_report_detail"),
     path("chat-reports/<int:pk>/resolve/", ResolveChatReportAPIView.as_view(), name="chat_report_resolve"),
+    path("chat-blocks/", AdminChatBlockListAPIView.as_view(), name="chat_block_list"),
 ]

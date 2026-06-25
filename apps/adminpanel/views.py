@@ -18,7 +18,7 @@ from apps.payments.models import Payment, PromotionPackage
 
 from apps.reviews.models import SellerReview
 
-from apps.chats.models import ChatReport
+from apps.chats.models import ChatReport, ChatBlock
 
 from .serializers import (
     AdminUserSerializer,
@@ -35,6 +35,7 @@ from .serializers import (
     AdminSellerReviewSerializer,
     AdminChatReportSerializer,
     ResolveChatReportSerializer,
+    AdminChatBlockSerializer,
 )
 
 from apps.notifications.services import (
@@ -1062,3 +1063,67 @@ class ResolveChatReportAPIView(APIView):
             status=status.HTTP_200_OK,
         )
 
+
+class AdminChatBlockListAPIView(generics.ListAPIView):
+    serializer_class = AdminChatBlockSerializer
+    permission_classes = [
+        permissions.IsAuthenticated,
+        IsAdminOrModerator,
+    ]
+
+    def get_queryset(self):
+        queryset = (
+            ChatBlock.objects
+            .select_related(
+                "blocker",
+                "blocked_user",
+                "thread",
+                "thread__listing",
+            )
+            .order_by("-created_at")
+        )
+
+        search = self.request.query_params.get("search")
+        blocker = self.request.query_params.get("blocker")
+        blocked_user = self.request.query_params.get("blocked_user")
+        thread = self.request.query_params.get("thread")
+        listing = self.request.query_params.get("listing")
+        is_active = self.request.query_params.get("is_active")
+        date_from = self.request.query_params.get("date_from")
+        date_to = self.request.query_params.get("date_to")
+
+        if search:
+            queryset = queryset.filter(
+                Q(reason__icontains=search)
+                | Q(blocker__full_name__icontains=search)
+                | Q(blocker__phone__icontains=search)
+                | Q(blocked_user__full_name__icontains=search)
+                | Q(blocked_user__phone__icontains=search)
+                | Q(thread__listing__title__icontains=search)
+            )
+
+        if blocker:
+            queryset = queryset.filter(blocker_id=blocker)
+
+        if blocked_user:
+            queryset = queryset.filter(blocked_user_id=blocked_user)
+
+        if thread:
+            queryset = queryset.filter(thread_id=thread)
+
+        if listing:
+            queryset = queryset.filter(thread__listing_id=listing)
+
+        if is_active == "true":
+            queryset = queryset.filter(is_active=True)
+
+        if is_active == "false":
+            queryset = queryset.filter(is_active=False)
+
+        if date_from:
+            queryset = queryset.filter(created_at__date__gte=date_from)
+
+        if date_to:
+            queryset = queryset.filter(created_at__date__lte=date_to)
+
+        return queryset.distinct()
