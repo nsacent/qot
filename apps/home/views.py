@@ -1,11 +1,11 @@
-from django.db.models import Count, Q
+from django.db.models import Q
+from django.utils import timezone
 from rest_framework import permissions, status
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from apps.categories.models import Category
 from apps.listings.models import Listing
-from django.utils import timezone
 
 from .serializers import HomeListingSerializer, HomeCategorySerializer
 
@@ -16,19 +16,43 @@ class HomeAPIView(APIView):
     def get_base_queryset(self):
         return (
             Listing.objects
-            .filter(
-                Q(children__listings__status=Listing.STATUS_ACTIVE)
-                & (
-                    Q(children__listings__expires_at__isnull=True)
-                    | Q(children__listings__expires_at__gt=timezone.now())
-                )
-            )
+            .filter(status=Listing.STATUS_ACTIVE)
             .filter(
                 Q(expires_at__isnull=True) | Q(expires_at__gt=timezone.now())
             )
-            .select_related("seller", "category", "category__parent", "city", "city__region")
+            .select_related(
+                "seller",
+                "category",
+                "category__parent",
+                "city",
+                "city__region",
+            )
             .prefetch_related("images")
         )
+
+    def get_popular_categories(self, listings):
+        parent_categories = Category.objects.filter(
+            is_active=True,
+            parent__isnull=True,
+        ).order_by("sort_order", "name")
+
+        popular_categories = []
+
+        for category in parent_categories:
+            category.listings_count = listings.filter(
+                Q(category=category) | Q(category__parent=category)
+            ).count()
+
+            popular_categories.append(category)
+
+        return sorted(
+            popular_categories,
+            key=lambda item: (
+                -item.listings_count,
+                item.sort_order,
+                item.name,
+            ),
+        )[:10]
 
     def get(self, request):
         listings = self.get_base_queryset()
@@ -40,7 +64,11 @@ class HomeAPIView(APIView):
 
         latest_listings = listings.order_by("-created_at")[:10]
 
-        popular_listings = listings.order_by("-views_count", "-favorites_count", "-created_at")[:10]
+        popular_listings = listings.order_by(
+            "-views_count",
+            "-favorites_count",
+            "-created_at",
+        )[:10]
 
         recent_cars = listings.filter(
             Q(category__slug="cars") | Q(category__parent__slug="vehicles")
@@ -54,23 +82,7 @@ class HomeAPIView(APIView):
             Q(category__slug="laptops") | Q(category__parent__slug="electronics")
         ).order_by("-created_at")[:10]
 
-        popular_categories = (
-            Category.objects
-            .filter(is_active=True, parent__isnull=True)
-            .annotate(
-                listings_count=Count(
-                    "children__listings",
-                    filter=(
-                        Q(children__listings__status=Listing.STATUS_ACTIVE)
-                        & (
-                            Q(children__listings__expires_at__isnull=True)
-                            | Q(children__listings__expires_at__gt=timezone.now())
-                        )
-                    ),
-                )
-            )
-            .order_by("-listings_count", "sort_order", "name")[:10]
-        )
+        popular_categories = self.get_popular_categories(listings)
 
         context = {"request": request}
 
