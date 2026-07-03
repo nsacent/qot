@@ -6,7 +6,8 @@ from .models import Listing
 
 class ListingFilter(django_filters.FilterSet):
     q = django_filters.CharFilter(method="search")
-    category = django_filters.CharFilter(field_name="category__slug")
+    #category = django_filters.CharFilter(field_name="category__slug")
+    category = django_filters.CharFilter(method="filter_category")
     city = django_filters.CharFilter(field_name="city__slug")
     region = django_filters.CharFilter(field_name="city__region__slug")
 
@@ -50,6 +51,17 @@ class ListingFilter(django_filters.FilterSet):
             | Q(seller__phone__icontains=value)
             | Q(attributes__value_text__icontains=value)
         ).distinct()
+    
+    def filter_category(self, queryset, name, value):
+        if not value:
+            return queryset
+
+        return queryset.filter(
+            Q(category__slug=value)
+            | Q(category__parent__slug=value)
+            | Q(category__name__iexact=value)
+            | Q(category__parent__name__iexact=value)
+        )
 
     def filter_queryset(self, queryset):
         queryset = super().filter_queryset(queryset)
