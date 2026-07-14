@@ -11,6 +11,7 @@ from .serializers import (
 class CategoryListAPIView(generics.ListAPIView):
     serializer_class = CategorySerializer
     permission_classes = [permissions.AllowAny]
+    pagination_class = None
 
     def get_queryset(self):
         return (
