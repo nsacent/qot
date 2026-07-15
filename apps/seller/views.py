@@ -4,7 +4,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from apps.common.permissions import IsNotBanned, IsVerifiedUser
-from apps.listings.models import Listing
+from apps.listings.models import Listing, ListingImage
 
 from apps.chats.models import ChatThread
 
@@ -16,6 +16,10 @@ from .serializers import (
     SellerAnalyticsSummarySerializer,
     SellerListingAnalyticsSerializer,
 )
+
+from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
+
+from apps.listings.serializers import ListingCreateUpdateSerializer, ListingDetailSerializer
 
 
 class SellerDashboardAPIView(APIView):
@@ -222,3 +226,80 @@ class SellerListingAnalyticsAPIView(APIView):
         serializer = SellerListingAnalyticsSerializer(data)
 
         return Response(serializer.data, status=status.HTTP_200_OK)
+
+def get_request_list_values(request, keys):
+    values = []
+
+    for key in keys:
+        if hasattr(request.data, "getlist"):
+            values.extend(request.data.getlist(key))
+
+        value = request.data.get(key)
+
+        if isinstance(value, list):
+            values.extend(value)
+        elif value:
+            values.extend(str(value).split(","))
+
+    cleaned_values = []
+
+    for value in values:
+        value = str(value).strip()
+
+        if value and value not in cleaned_values:
+            cleaned_values.append(value)
+
+    return cleaned_values
+
+
+class SellerListingDetailAPIView(generics.RetrieveUpdateDestroyAPIView):
+    permission_classes = [permissions.IsAuthenticated]
+    parser_classes = [JSONParser, MultiPartParser, FormParser]
+    lookup_field = "pk"
+
+    def get_queryset(self):
+        return (
+            Listing.objects
+            .filter(seller=self.request.user)
+            .select_related("seller", "category", "city")
+            .prefetch_related("images", "attributes")
+        )
+
+    def get_serializer_class(self):
+        if self.request.method in ["GET"]:
+            return ListingDetailSerializer
+
+        return ListingCreateUpdateSerializer
+
+    def perform_update(self, serializer):
+        listing = serializer.save(seller=self.request.user)
+
+        remove_image_ids = get_request_list_values(
+            self.request,
+            ["remove_image_ids", "deleted_images", "deleted_image_ids"],
+        )
+
+        if remove_image_ids:
+            ListingImage.objects.filter(
+                listing=listing,
+                id__in=remove_image_ids,
+            ).delete()
+
+        uploaded_images = (
+            self.request.FILES.getlist("images")
+            or self.request.FILES.getlist("new_images")
+            or self.request.FILES.getlist("photos")
+        )
+
+        if uploaded_images:
+            start_order = ListingImage.objects.filter(listing=listing).count()
+
+            for index, image in enumerate(uploaded_images):
+                ListingImage.objects.create(
+                    listing=listing,
+                    image=image,
+                    sort_order=start_order + index,
+                )
+
+    def perform_destroy(self, instance):
+        instance.delete()
