@@ -17,7 +17,6 @@ class ListingImageSerializer(serializers.ModelSerializer):
             "image",
             "image_url",
             "is_primary",
-            "image_count",
             "sort_order",
             "created_at",
         ]
@@ -26,6 +25,7 @@ class ListingImageSerializer(serializers.ModelSerializer):
             "image_url",
             "is_primary",
             "created_at",
+            
         ]
 
     def get_image_url(self, obj):
@@ -276,6 +276,7 @@ class ListingDetailSerializer(serializers.ModelSerializer):
             "sold_at",
             "rejection_reason",
             "images",
+            "image_count",
             "attributes",
             "created_at",
             "updated_at",
@@ -292,6 +293,7 @@ class ListingDetailSerializer(serializers.ModelSerializer):
             "created_at",
             "featured_until",
             "updated_at",
+
         ]
 
 
