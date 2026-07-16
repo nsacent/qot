@@ -184,8 +184,8 @@ class ListingListSerializer(serializers.ModelSerializer):
             "featured_until",
             "views_count",
             "favorites_count",
-            "primary_image",
             "image_count",
+            "primary_image",
             "created_at",
         ]
         read_only_fields = [
