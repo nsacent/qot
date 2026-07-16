@@ -7,7 +7,9 @@ class SellerListingSerializer(serializers.ModelSerializer):
     category_name = serializers.CharField(source="category.name", read_only=True)
     city_name = serializers.CharField(source="city.name", read_only=True)
     primary_image = serializers.SerializerMethodField()
+    image_count = serializers.SerializerMethodField()
 
+    
     class Meta:
         model = Listing
         fields = [
@@ -32,6 +34,7 @@ class SellerListingSerializer(serializers.ModelSerializer):
             "created_at",
             "updated_at",
             "primary_image",
+            "image_count",
         ]
 
     def get_primary_image(self, obj):
@@ -46,6 +49,15 @@ class SellerListingSerializer(serializers.ModelSerializer):
             return request.build_absolute_uri(image.image.url)
 
         return image.image.url
+    
+    def get_image_count(self, obj):
+        annotated_count = getattr(obj, "image_count", None)
+
+        if annotated_count is not None:
+            return annotated_count
+
+        return obj.images.count()
+
     
 
 class SellerAnalyticsSummarySerializer(serializers.Serializer):

@@ -17,6 +17,7 @@ class ListingImageSerializer(serializers.ModelSerializer):
             "image",
             "image_url",
             "is_primary",
+            "image_count",
             "sort_order",
             "created_at",
         ]
@@ -159,6 +160,8 @@ class ListingListSerializer(serializers.ModelSerializer):
         read_only=True,
     )
     primary_image = serializers.SerializerMethodField()
+    image_count = serializers.SerializerMethodField()
+
 
     class Meta:
         model = Listing
@@ -182,6 +185,7 @@ class ListingListSerializer(serializers.ModelSerializer):
             "views_count",
             "favorites_count",
             "primary_image",
+            "image_count",
             "created_at",
         ]
         read_only_fields = [
@@ -207,6 +211,14 @@ class ListingListSerializer(serializers.ModelSerializer):
             return request.build_absolute_uri(image.image.url)
 
         return image.image.url
+    
+    def get_image_count(self, obj):
+        annotated_count = getattr(obj, "image_count", None)
+
+        if annotated_count is not None:
+            return annotated_count
+
+        return obj.images.count()
 
 
 class ListingDetailSerializer(serializers.ModelSerializer):
@@ -229,6 +241,13 @@ class ListingDetailSerializer(serializers.ModelSerializer):
 
     images = ListingImageSerializer(many=True, read_only=True)
     attributes = ListingAttributeSerializer(many=True, read_only=True)
+    image_count = serializers.SerializerMethodField()
+
+    def get_image_count(self, obj):
+        annotated_count = getattr(obj, "image_count", None)
+        if annotated_count is not None:
+            return annotated_count
+        return obj.images.count()
 
     class Meta:
         model = Listing
