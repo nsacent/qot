@@ -134,6 +134,25 @@ class ListingListCreateAPIView(generics.ListCreateAPIView):
                 continue
 
             queryset = self.filter_by_attribute(queryset, key, value)
+
+        sort = self.request.query_params.get("sort")
+
+        if sort == "newest":
+            return queryset.order_by("-created_at").distinct()
+
+        if sort == "oldest":
+            return queryset.order_by("created_at").distinct()
+
+        if sort == "price_low":
+            return queryset.order_by("price").distinct()
+
+        if sort == "price_high":
+            return queryset.order_by("-price").distinct()
+
+        if sort == "popular":
+            return queryset.order_by("-views_count", "-created_at").distinct()
+
+        return queryset.order_by("-created_at").distinct()
    
 
     def filter_by_attribute(self, queryset, key, value):

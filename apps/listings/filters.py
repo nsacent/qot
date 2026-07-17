@@ -5,19 +5,22 @@ from .models import Listing
 
 
 class ListingFilter(django_filters.FilterSet):
-    q = django_filters.CharFilter(method="search")
-    #category = django_filters.CharFilter(field_name="category__slug")
+    q = django_filters.CharFilter(method="filter_search")
+    search = django_filters.CharFilter(method="filter_search")
+
     category = django_filters.CharFilter(method="filter_category")
-    city = django_filters.CharFilter(field_name="city__slug")
-    region = django_filters.CharFilter(field_name="city__region__slug")
+    city = django_filters.CharFilter(method="filter_city")
+    region = django_filters.CharFilter(method="filter_region")
 
     min_price = django_filters.NumberFilter(field_name="price", lookup_expr="gte")
     max_price = django_filters.NumberFilter(field_name="price", lookup_expr="lte")
 
     condition = django_filters.CharFilter(field_name="condition")
     status = django_filters.CharFilter(field_name="status")
-
     seller = django_filters.NumberFilter(field_name="seller_id")
+
+    is_negotiable = django_filters.BooleanFilter(field_name="is_negotiable")
+    negotiable = django_filters.BooleanFilter(field_name="is_negotiable")
 
     sort = django_filters.CharFilter(method="sort_results")
 
@@ -25,6 +28,7 @@ class ListingFilter(django_filters.FilterSet):
         model = Listing
         fields = [
             "q",
+            "search",
             "category",
             "city",
             "region",
@@ -33,10 +37,12 @@ class ListingFilter(django_filters.FilterSet):
             "condition",
             "status",
             "seller",
+            "is_negotiable",
+            "negotiable",
             "sort",
         ]
 
-    def search(self, queryset, name, value):
+    def filter_search(self, queryset, name, value):
         if not value:
             return queryset
 
@@ -51,7 +57,7 @@ class ListingFilter(django_filters.FilterSet):
             | Q(seller__phone__icontains=value)
             | Q(attributes__value_text__icontains=value)
         ).distinct()
-    
+
     def filter_category(self, queryset, name, value):
         if not value:
             return queryset
@@ -63,6 +69,26 @@ class ListingFilter(django_filters.FilterSet):
             | Q(category__parent__name__iexact=value)
         )
 
+    def filter_city(self, queryset, name, value):
+        if not value:
+            return queryset
+
+        return queryset.filter(
+            Q(city__slug=value)
+            | Q(city__name__iexact=value)
+            | Q(city__id__iexact=value)
+        )
+
+    def filter_region(self, queryset, name, value):
+        if not value:
+            return queryset
+
+        return queryset.filter(
+            Q(city__region__slug=value)
+            | Q(city__region__name__iexact=value)
+            | Q(city__region__id__iexact=value)
+        )
+
     def filter_queryset(self, queryset):
         queryset = super().filter_queryset(queryset)
 
@@ -70,6 +96,7 @@ class ListingFilter(django_filters.FilterSet):
             "page",
             "page_size",
             "q",
+            "search",
             "category",
             "city",
             "region",
@@ -80,6 +107,8 @@ class ListingFilter(django_filters.FilterSet):
             "seller",
             "sort",
             "mine",
+            "is_negotiable",
+            "negotiable",
         }
 
         for key, value in self.request.query_params.items():
