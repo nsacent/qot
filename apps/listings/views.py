@@ -97,6 +97,7 @@ class ListingListCreateAPIView(generics.ListCreateAPIView):
             "page",
             "page_size",
             "q",
+            "search",
             "category",
             "city",
             "region",
@@ -107,7 +108,23 @@ class ListingListCreateAPIView(generics.ListCreateAPIView):
             "seller",
             "sort",
             "mine",
+            "is_negotiable",
+            "negotiable",
         }
+
+        negotiable_value = (
+            self.request.query_params.get("is_negotiable")
+            or self.request.query_params.get("negotiable")
+        )
+
+        if negotiable_value is not None and negotiable_value != "":
+            value = str(negotiable_value).strip().lower()
+
+            if value in ["true", "1", "yes", "on"]:
+                queryset = queryset.filter(is_negotiable=True)
+
+            elif value in ["false", "0", "no", "off"]:
+                queryset = queryset.filter(is_negotiable=False)
 
         for key, value in self.request.query_params.items():
             if key in reserved_params:
@@ -117,25 +134,7 @@ class ListingListCreateAPIView(generics.ListCreateAPIView):
                 continue
 
             queryset = self.filter_by_attribute(queryset, key, value)
-
-        sort = self.request.query_params.get("sort")
-
-        if sort == "newest":
-            return queryset.order_by("-created_at").distinct()
-
-        if sort == "oldest":
-            return queryset.order_by("created_at").distinct()
-
-        if sort == "price_low":
-            return queryset.order_by("price").distinct()
-
-        if sort == "price_high":
-            return queryset.order_by("-price").distinct()
-
-        if sort == "popular":
-            return queryset.order_by("-views_count", "-created_at").distinct()
-
-        return queryset.order_by("-created_at").distinct()
+   
 
     def filter_by_attribute(self, queryset, key, value):
         value_text = str(value).strip()
