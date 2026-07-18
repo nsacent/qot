@@ -137,6 +137,19 @@ class ListingImage(models.Model):
         return f"Image for {self.listing.title}"
 
 
+class PendingListingImage(models.Model):
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="pending_listing_images",
+    )
+    image = models.ImageField(upload_to="listings/images/")
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+
+    def __str__(self):
+        return f"Pending listing image for {self.user_id}"
+
+
 class ListingAttribute(models.Model):
     listing = models.ForeignKey(
         Listing,

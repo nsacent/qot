@@ -1,3 +1,6 @@
+import json
+
+from django.db import transaction
 from django.db.models import F,Q
 from django.utils.text import slugify
 from .filters import ListingFilter
@@ -6,7 +9,7 @@ from rest_framework import generics, permissions, status
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from .models import Listing, ListingImage
+from .models import Listing, ListingImage, PendingListingImage
 from .permissions import IsListingOwnerOrReadOnly
 
 from decimal import Decimal, InvalidOperation
@@ -71,14 +74,108 @@ class ListingListCreateAPIView(generics.ListCreateAPIView):
         )
 
     def create(self, request, *args, **kwargs):
-        serializer = self.get_serializer(data=request.data)
+        if hasattr(request.data, "dict"):
+            payload = request.data.dict()
+        else:
+            payload = dict(request.data)
+
+        payload.pop("images", None)
+        staged_image_ids = request.data.get("staged_image_ids", [])
+        payload.pop("staged_image_ids", None)
+        attributes = request.data.get("attributes", [])
+
+        if isinstance(staged_image_ids, str):
+            try:
+                staged_image_ids = json.loads(staged_image_ids)
+            except json.JSONDecodeError:
+                return Response(
+                    {"staged_image_ids": ["Staged image IDs must be valid JSON."]},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+        if not isinstance(staged_image_ids, list):
+            return Response(
+                {"staged_image_ids": ["Staged image IDs must be a list."]},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if isinstance(attributes, str):
+            try:
+                parsed_attributes = json.loads(attributes)
+            except json.JSONDecodeError:
+                return Response(
+                    {"attributes": ["Attributes must be valid JSON."]},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            if not isinstance(parsed_attributes, list):
+                return Response(
+                    {"attributes": ["Attributes must be a list."]},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            payload["attributes"] = parsed_attributes
+        else:
+            payload["attributes"] = attributes
+
+        images = request.FILES.getlist("images")
+
+        if len(images) + len(staged_image_ids) > 10:
+            return Response(
+                {"images": ["A listing can have a maximum of 10 images."]},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        validated_images = []
+
+        for image in images:
+            image_serializer = ListingImageSerializer(data={"image": image})
+            image_serializer.is_valid(raise_exception=True)
+            validated_images.append(image_serializer.validated_data["image"])
+
+        serializer = self.get_serializer(data=payload)
         serializer.is_valid(raise_exception=True)
 
-        listing = serializer.save()
+        with transaction.atomic():
+            staged_images = list(
+                PendingListingImage.objects.select_for_update().filter(
+                    id__in=staged_image_ids,
+                    user=request.user,
+                )
+            )
 
-        base_slug = slugify(listing.title)
-        listing.slug = f"{base_slug}-{listing.id}"
-        listing.save(update_fields=["slug"])
+            staged_by_id = {image.id: image for image in staged_images}
+
+            if len(staged_by_id) != len(set(staged_image_ids)):
+                return Response(
+                    {"staged_image_ids": ["One or more staged photos are invalid."]},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            listing = serializer.save()
+
+            ordered_images = [
+                staged_by_id[image_id].image.name
+                for image_id in staged_image_ids
+            ] + validated_images
+
+            for index, image in enumerate(ordered_images):
+                ListingImage.objects.create(
+                    listing=listing,
+                    image=image,
+                    is_primary=index == 0,
+                    sort_order=index,
+                )
+
+            if staged_images:
+                PendingListingImage.objects.filter(
+                    id__in=staged_image_ids,
+                    user=request.user,
+                ).delete()
+
+            base_slug = slugify(listing.title)
+            listing.slug = f"{base_slug}-{listing.id}"
+            listing.save(update_fields=["slug"])
 
         response_serializer = ListingDetailSerializer(
             listing,
@@ -153,7 +250,6 @@ class ListingListCreateAPIView(generics.ListCreateAPIView):
             return queryset.order_by("-views_count", "-created_at").distinct()
 
         return queryset.order_by("-created_at").distinct()
-   
 
     def filter_by_attribute(self, queryset, key, value):
         value_text = str(value).strip()
@@ -186,6 +282,55 @@ class ListingListCreateAPIView(generics.ListCreateAPIView):
             attributes__category_filter__key=key,
             attributes__value_text__iexact=value_text,
         )
+
+
+class PendingListingImageAPIView(APIView):
+    permission_classes = [
+        permissions.IsAuthenticated,
+        IsNotBanned,
+        IsVerifiedUser,
+    ]
+
+    def post(self, request):
+        image_serializer = ListingImageSerializer(data=request.data)
+        image_serializer.is_valid(raise_exception=True)
+
+        pending_count = PendingListingImage.objects.filter(user=request.user).count()
+
+        if pending_count >= 10:
+            return Response(
+                {"detail": "You can stage a maximum of 10 photos."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        pending_image = PendingListingImage.objects.create(
+            user=request.user,
+            image=image_serializer.validated_data["image"],
+        )
+
+        return Response(
+            {
+                "id": pending_image.id,
+                "image_url": request.build_absolute_uri(pending_image.image.url),
+            },
+            status=status.HTTP_201_CREATED,
+        )
+
+    def delete(self, request, pk):
+        pending_image = PendingListingImage.objects.filter(
+            pk=pk,
+            user=request.user,
+        ).first()
+
+        if not pending_image:
+            return Response(
+                {"detail": "Staged photo not found."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        pending_image.image.delete(save=False)
+        pending_image.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
 
 
 class ListingDetailAPIView(generics.RetrieveUpdateDestroyAPIView):
