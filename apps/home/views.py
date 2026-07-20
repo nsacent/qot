@@ -57,10 +57,15 @@ class HomeAPIView(APIView):
     def get(self, request):
         listings = self.get_base_queryset()
 
-        featured_listings = listings.filter(
-            is_featured=True,
-            featured_until__gt=timezone.now(),
-        ).order_by("-created_at")[:10]
+        featured_listings = (
+            listings
+            .filter(is_featured=True)
+            .filter(
+                Q(featured_until__isnull=True)
+                | Q(featured_until__gt=timezone.now())
+            )
+            .order_by("-created_at")[:10]
+        )
 
         latest_listings = listings.order_by("-created_at")[:10]
 

@@ -184,6 +184,30 @@ class ListingLifecycleTests(APITestCase):
         self.assertIsNone(listing.featured_until)
         self.assertEqual(listing.status, Listing.STATUS_ACTIVE)
 
+    def test_featured_sort_returns_only_current_featured_listings(self):
+        current_featured = self.create_listing(
+            is_featured=True,
+            featured_until=timezone.now() + timedelta(days=2),
+        )
+        indefinite_featured = self.create_listing(
+            is_featured=True,
+            featured_until=None,
+        )
+        self.create_listing(
+            is_featured=True,
+            featured_until=timezone.now() - timedelta(minutes=1),
+        )
+        self.create_listing(is_featured=False)
+
+        response = self.client.get("/api/v1/listings/?sort=featured")
+        listing_ids = [item["id"] for item in response.data["results"]]
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(
+            set(listing_ids),
+            {current_featured.id, indefinite_featured.id},
+        )
+
     def test_missing_image_cleanup_repairs_primary_image(self):
         listing = self.create_listing()
         existing_image = ListingImage.objects.create(

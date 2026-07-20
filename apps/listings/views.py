@@ -251,6 +251,18 @@ class ListingListCreateAPIView(generics.ListCreateAPIView):
 
         sort = self.request.query_params.get("sort")
 
+        if sort == "featured":
+            return (
+                queryset
+                .filter(is_featured=True)
+                .filter(
+                    Q(featured_until__isnull=True)
+                    | Q(featured_until__gt=timezone.now())
+                )
+                .order_by("-created_at")
+                .distinct()
+            )
+
         if sort == "newest":
             return queryset.order_by("-created_at").distinct()
 
