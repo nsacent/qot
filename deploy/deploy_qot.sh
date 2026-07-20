@@ -40,8 +40,10 @@ npm run build
 systemctl restart qot-web.service
 
 curl --fail --silent --show-error --location --max-time 30 \
+    --retry 15 --retry-delay 2 --retry-all-errors \
     https://api.qot.ug/api/v1/listings/ >/dev/null
 curl --fail --silent --show-error --location --max-time 30 \
+    --retry 15 --retry-delay 2 --retry-all-errors \
     https://qot.ug/ >/dev/null
 
 echo "QOT deployment completed successfully."

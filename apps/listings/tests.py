@@ -13,7 +13,7 @@ from apps.accounts.models import User
 from apps.categories.models import Category
 from apps.locations.models import City, Region
 
-from .models import Listing, PendingListingImage
+from .models import Listing, ListingImage, PendingListingImage
 
 
 class ListingLifecycleTests(APITestCase):
@@ -183,6 +183,29 @@ class ListingLifecycleTests(APITestCase):
         self.assertFalse(listing.is_featured)
         self.assertIsNone(listing.featured_until)
         self.assertEqual(listing.status, Listing.STATUS_ACTIVE)
+
+    def test_missing_image_cleanup_repairs_primary_image(self):
+        listing = self.create_listing()
+        existing_image = ListingImage.objects.create(
+            listing=listing,
+            image=SimpleUploadedFile(
+                "existing.jpg",
+                b"existing-image-content",
+                content_type="image/jpeg",
+            ),
+            is_primary=False,
+        )
+        missing_image = ListingImage.objects.create(
+            listing=listing,
+            image="listings/images/missing.jpg",
+            is_primary=True,
+        )
+
+        call_command("cleanup_missing_listing_images", delete_missing=True)
+
+        self.assertFalse(ListingImage.objects.filter(pk=missing_image.pk).exists())
+        existing_image.refresh_from_db()
+        self.assertTrue(existing_image.is_primary)
 
     def test_cleanup_pending_images_removes_database_row_and_file(self):
         pending_image = PendingListingImage.objects.create(
