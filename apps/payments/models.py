@@ -57,11 +57,13 @@ class PromotionPackage(models.Model):
 class Payment(models.Model):
     PURPOSE_FEATURED_LISTING = "featured_listing"
     PURPOSE_BOOST_LISTING = "boost_listing"
+    PURPOSE_HOMEPAGE_PROMOTION = "homepage_promotion"
     PURPOSE_SUBSCRIPTION = "subscription"
 
     PURPOSE_CHOICES = [
         (PURPOSE_FEATURED_LISTING, "Featured Listing"),
         (PURPOSE_BOOST_LISTING, "Boost Listing"),
+        (PURPOSE_HOMEPAGE_PROMOTION, "Homepage Promotion"),
         (PURPOSE_SUBSCRIPTION, "Subscription"),
     ]
 

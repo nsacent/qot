@@ -40,6 +40,9 @@ class ListingListCreateAPIView(generics.ListCreateAPIView):
                 IsVerifiedUser(),
             ]
 
+        if self.request.query_params.get("mine") == "true":
+            return [permissions.IsAuthenticated(), IsNotBanned()]
+
         return [permissions.AllowAny()]
 
     def get_serializer_class(self):
@@ -96,6 +99,20 @@ class ListingListCreateAPIView(generics.ListCreateAPIView):
         if not isinstance(staged_image_ids, list):
             return Response(
                 {"staged_image_ids": ["Staged image IDs must be a list."]},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            staged_image_ids = [int(image_id) for image_id in staged_image_ids]
+        except (TypeError, ValueError):
+            return Response(
+                {"staged_image_ids": ["Every staged image ID must be an integer."]},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if len(staged_image_ids) != len(set(staged_image_ids)):
+            return Response(
+                {"staged_image_ids": ["Staged image IDs cannot be duplicated."]},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
@@ -292,6 +309,15 @@ class PendingListingImageAPIView(APIView):
     ]
 
     def post(self, request):
+        expired_images = PendingListingImage.objects.filter(
+            user=request.user,
+            created_at__lt=timezone.now() - timedelta(hours=24),
+        )
+
+        for expired_image in expired_images:
+            expired_image.image.delete(save=False)
+            expired_image.delete()
+
         image_serializer = ListingImageSerializer(data=request.data)
         image_serializer.is_valid(raise_exception=True)
 
@@ -352,42 +378,44 @@ class ListingDetailAPIView(generics.RetrieveUpdateDestroyAPIView):
         return ListingDetailSerializer
 
     def get_queryset(self):
-        return (
+        queryset = (
             Listing.objects
             .select_related("seller", "category", "category__parent", "city")
             .prefetch_related("images", "attributes", "attributes__category_filter")
             .exclude(status=Listing.STATUS_DELETED)
         )
 
-    def retrieve(self, request, *args, **kwargs):
-        instance = self.get_object()
+        if self.request.method not in permissions.SAFE_METHODS:
+            return queryset
 
-        if instance.status == Listing.STATUS_ACTIVE:
-            Listing.objects.filter(pk=instance.pk).update(
-                views_count=F("views_count") + 1
-            )
-            instance.refresh_from_db(fields=["views_count"])
+        public_listings = Q(status=Listing.STATUS_ACTIVE) & (
+            Q(expires_at__isnull=True) | Q(expires_at__gt=timezone.now())
+        )
 
-        serializer = self.get_serializer(instance)
-        return Response(serializer.data)
+        user = self.request.user
 
-    def perform_destroy(self, instance):
-        instance.soft_delete()
+        if user.is_authenticated:
+            if user.is_staff or getattr(user, "role", "") in {"admin", "moderator"}:
+                return queryset
 
+            return queryset.filter(Q(seller=user) | public_listings)
+
+        return queryset.filter(public_listings)
 
     def retrieve(self, request, *args, **kwargs):
         listing = self.get_object()
 
-        if request.method == "GET":
+        if listing.status == Listing.STATUS_ACTIVE:
             Listing.objects.filter(pk=listing.pk).update(
-                views_count=listing.views_count + 1
+                views_count=F("views_count") + 1
             )
-
             listing.refresh_from_db(fields=["views_count"])
 
         serializer = self.get_serializer(listing)
-
         return Response(serializer.data)
+
+    def perform_destroy(self, instance):
+        instance.soft_delete()
 
 
 class MarkListingSoldAPIView(APIView):
@@ -409,9 +437,19 @@ class MarkListingSoldAPIView(APIView):
                 status=status.HTTP_404_NOT_FOUND,
             )
 
-        if listing.status == Listing.STATUS_DELETED:
+        allowed_statuses = {
+            Listing.STATUS_ACTIVE,
+            Listing.STATUS_UNAVAILABLE,
+        }
+
+        if listing.status not in allowed_statuses:
             return Response(
-                {"detail": "Deleted listings cannot be marked as sold."},
+                {
+                    "detail": (
+                        "Only approved active or unavailable listings can be marked "
+                        "as sold. Pending and rejected listings require moderation."
+                    )
+                },
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
@@ -448,15 +486,19 @@ class MarkListingAvailableAPIView(APIView):
                 status=status.HTTP_404_NOT_FOUND,
             )
 
-        if listing.status == Listing.STATUS_DELETED:
-            return Response(
-                {"detail": "Deleted listings cannot be made available."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+        allowed_statuses = {
+            Listing.STATUS_UNAVAILABLE,
+            Listing.STATUS_SOLD,
+        }
 
-        if listing.status == Listing.STATUS_REJECTED:
+        if listing.status not in allowed_statuses:
             return Response(
-                {"detail": "Rejected listings must be edited and resubmitted."},
+                {
+                    "detail": (
+                        "Only sold or unavailable listings can be marked available. "
+                        "Pending and rejected listings require moderation."
+                    )
+                },
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
@@ -541,15 +583,20 @@ class RelistListingAPIView(APIView):
                 status=status.HTTP_404_NOT_FOUND,
             )
 
-        if listing.status == Listing.STATUS_DELETED:
-            return Response(
-                {"detail": "Deleted listings cannot be relisted."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+        allowed_statuses = {
+            Listing.STATUS_EXPIRED,
+            Listing.STATUS_UNAVAILABLE,
+            Listing.STATUS_SOLD,
+        }
 
-        if listing.status == Listing.STATUS_REJECTED:
+        if listing.status not in allowed_statuses:
             return Response(
-                {"detail": "Rejected listings must be edited and resubmitted."},
+                {
+                    "detail": (
+                        "Only expired, unavailable, or sold listings can be relisted. "
+                        "Pending and rejected listings require moderation."
+                    )
+                },
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
@@ -598,15 +645,19 @@ class RenewListingAPIView(APIView):
                 status=status.HTTP_404_NOT_FOUND,
             )
 
-        if listing.status == Listing.STATUS_DELETED:
-            return Response(
-                {"detail": "Deleted listings cannot be renewed."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+        allowed_statuses = {
+            Listing.STATUS_ACTIVE,
+            Listing.STATUS_EXPIRED,
+        }
 
-        if listing.status == Listing.STATUS_REJECTED:
+        if listing.status not in allowed_statuses:
             return Response(
-                {"detail": "Rejected listings must be edited and resubmitted for approval."},
+                {
+                    "detail": (
+                        "Only active or expired listings can be renewed. "
+                        "Pending and rejected listings require moderation."
+                    )
+                },
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
@@ -720,6 +771,7 @@ class ListingImageDeleteAPIView(APIView):
 
         was_primary = image.is_primary
 
+        image.image.delete(save=False)
         image.delete()
 
         if was_primary:

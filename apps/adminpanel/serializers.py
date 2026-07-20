@@ -31,6 +31,7 @@ class AdminListingSerializer(serializers.ModelSerializer):
     seller_phone = serializers.CharField(source="seller.phone", read_only=True)
     category_name = serializers.CharField(source="category.name", read_only=True)
     city_name = serializers.CharField(source="city.name", read_only=True)
+    primary_image = serializers.SerializerMethodField()
 
     class Meta:
         model = Listing
@@ -54,9 +55,23 @@ class AdminListingSerializer(serializers.ModelSerializer):
             "views_count",
             "favorites_count",
             "rejection_reason",
+            "primary_image",
             "created_at",
             "updated_at",
         ]
+
+    def get_primary_image(self, obj):
+        image = obj.images.filter(is_primary=True).first() or obj.images.first()
+
+        if not image or not image.image:
+            return None
+
+        request = self.context.get("request")
+
+        if request:
+            return request.build_absolute_uri(image.image.url)
+
+        return image.image.url
 
 
 class ListingRejectSerializer(serializers.Serializer):

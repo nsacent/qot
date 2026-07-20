@@ -76,8 +76,8 @@ class PaymentCreateSerializer(serializers.ModelSerializer):
 
     package = serializers.PrimaryKeyRelatedField(
         queryset=PromotionPackage.objects.filter(is_active=True),
-        required=False,
-        allow_null=True,
+        required=True,
+        allow_null=False,
     )
 
     class Meta:
@@ -90,6 +90,11 @@ class PaymentCreateSerializer(serializers.ModelSerializer):
             "currency",
             "payment_method",
         ]
+        read_only_fields = [
+            "purpose",
+            "amount",
+            "currency",
+        ]
 
     def validate(self, attrs):
         request = self.context["request"]
@@ -97,13 +102,12 @@ class PaymentCreateSerializer(serializers.ModelSerializer):
         purpose = attrs.get("purpose")
         package = attrs.get("package")
 
-        if package:
-            attrs["purpose"] = package.package_type
-            attrs["amount"] = package.price
-            attrs["currency"] = package.currency
-            purpose = package.package_type
+        attrs["purpose"] = package.package_type
+        attrs["amount"] = package.price
+        attrs["currency"] = package.currency
+        purpose = package.package_type
 
-        if attrs["amount"] <= 0:
+        if package.price <= 0:
             raise serializers.ValidationError(
                 {"amount": "Amount must be greater than zero."}
             )

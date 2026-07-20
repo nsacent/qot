@@ -1,0 +1,6 @@
+[Unit]
+Description=Back up the QOT database and uploaded media
+
+[Service]
+Type=oneshot
+ExecStart=/home/qot.ug/backup_qot.sh

@@ -5,26 +5,27 @@ from apps.listings.models import Listing
 
 
 class Command(BaseCommand):
-    help = "Expire active listings whose expiry date has passed."
+    help = "Remove featured status from listings whose promotion has expired."
 
     def handle(self, *args, **options):
         now = timezone.now()
 
         queryset = Listing.objects.filter(
-            status=Listing.STATUS_ACTIVE,
-            expires_at__isnull=False,
-            expires_at__lt=now,
+            is_featured=True,
+            featured_until__isnull=False,
+            featured_until__lt=now,
         )
 
         count = queryset.count()
 
         queryset.update(
-            status=Listing.STATUS_EXPIRED,
+            is_featured=False,
+            featured_until=None,
             updated_at=now,
         )
 
         self.stdout.write(
             self.style.SUCCESS(
-                f"Expired {count} listing(s)."
+                f"Expired {count} featured promotion(s)."
             )
         )

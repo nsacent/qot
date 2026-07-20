@@ -1,0 +1,8 @@
+[Unit]
+Description=Expire stale QOT data and remove abandoned uploads
+
+[Service]
+Type=oneshot
+User=qotug2471
+Group=qotug2471
+ExecStart=/home/qot.ug/maintenance_qot.sh

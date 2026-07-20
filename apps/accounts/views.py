@@ -11,9 +11,11 @@ from django.utils.http import urlsafe_base64_encode
 from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework_simplejwt.exceptions import TokenError
 
+from .models import User
 from .serializers import (
     RegisterSerializer,
     LoginSerializer,
+    GoogleLoginSerializer,
     UserSerializer,
     ProfileUpdateSerializer,
     PasswordResetRequestSerializer,
@@ -25,8 +27,12 @@ from .serializers import (
 from .services import create_email_verification_code, verify_email_code
 
 
-def get_tokens_for_user(user):
+def get_tokens_for_user(user, keep_signed_in=False):
     refresh = RefreshToken.for_user(user)
+
+    if keep_signed_in:
+        refresh["keep_signed_in"] = True
+        refresh.set_exp(lifetime=settings.KEEP_SIGNED_IN_LIFETIME)
 
     return {
         "refresh": str(refresh),
@@ -63,11 +69,108 @@ class LoginAPIView(APIView):
         serializer.is_valid(raise_exception=True)
 
         user = serializer.validated_data["user"]
-        tokens = get_tokens_for_user(user)
+        tokens = get_tokens_for_user(
+            user,
+            keep_signed_in=serializer.validated_data["keep_signed_in"],
+        )
 
         return Response(
             {
                 "message": "Login successful.",
+                "user": UserSerializer(user).data,
+                "tokens": tokens,
+            },
+            status=status.HTTP_200_OK,
+        )
+
+
+class GoogleLoginAPIView(APIView):
+    permission_classes = [permissions.AllowAny]
+
+    def post(self, request):
+        if request.content_type != "application/json":
+            return Response(
+                {"detail": "Google sign-in requires a JSON request."},
+                status=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
+            )
+
+        serializer = GoogleLoginSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        identity = serializer.validated_data["identity"]
+        google_sub = str(identity["sub"])
+        email = str(identity["email"]).strip().lower()
+        full_name = str(identity.get("name") or "").strip()
+
+        if not full_name:
+            given_name = str(identity.get("given_name") or "").strip()
+            family_name = str(identity.get("family_name") or "").strip()
+            full_name = f"{given_name} {family_name}".strip() or email.split("@")[0]
+
+        user = User.objects.filter(google_sub=google_sub).first()
+        found_by_email = False
+
+        if user is None:
+            user = User.objects.filter(email__iexact=email).first()
+            found_by_email = user is not None
+
+        if user and not user.is_active:
+            return Response(
+                {"detail": "This account is inactive."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        if user and user.is_banned:
+            return Response(
+                {"detail": "This account has been banned."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        if found_by_email:
+            if user and user.google_sub and user.google_sub != google_sub:
+                return Response(
+                    {"detail": "This email is linked to another Google account."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            email_domain = email.rsplit("@", 1)[-1]
+            google_is_authoritative = email_domain in {
+                "gmail.com",
+                "googlemail.com",
+            } or bool(identity.get("hd"))
+
+            if not google_is_authoritative:
+                return Response(
+                    {
+                        "detail": (
+                            "For security, log in with your password before linking "
+                            "this Google account."
+                        )
+                    },
+                    status=status.HTTP_409_CONFLICT,
+                )
+
+            user.google_sub = google_sub
+            user.is_verified = True
+            user.save(update_fields=["google_sub", "is_verified", "updated_at"])
+
+        if user is None:
+            user = User.objects.create_user(
+                email=email,
+                full_name=full_name,
+                password=None,
+                google_sub=google_sub,
+                is_verified=True,
+            )
+
+        tokens = get_tokens_for_user(
+            user,
+            keep_signed_in=serializer.validated_data["keep_signed_in"],
+        )
+
+        return Response(
+            {
+                "message": "Google sign-in successful.",
                 "user": UserSerializer(user).data,
                 "tokens": tokens,
             },

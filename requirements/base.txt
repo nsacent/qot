@@ -13,3 +13,4 @@ celery
 gunicorn
 uvicorn
 daphne
+google-auth[requests]

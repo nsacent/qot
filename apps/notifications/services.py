@@ -40,7 +40,15 @@ def create_notification(
     message,
     listing=None,
     chat_thread=None,
+    preference_key=None,
 ):
+    if preference_key:
+        profile = getattr(user, "profile", None)
+        preferences = getattr(profile, "notification_preferences", {}) or {}
+
+        if preferences.get(preference_key, True) is False:
+            return None
+
     notification = Notification.objects.create(
         user=user,
         notification_type=notification_type,
@@ -70,6 +78,7 @@ def create_message_notification(thread, message):
         message=f"{sender.full_name} sent you a message.",
         listing=thread.listing,
         chat_thread=thread,
+        preference_key="messages",
     )
 
 
@@ -80,6 +89,7 @@ def create_listing_approved_notification(listing):
         title="Listing approved",
         message=f"Your listing '{listing.title}' has been approved and is now live.",
         listing=listing,
+        preference_key="listing_approvals",
     )
 
 
@@ -92,6 +102,7 @@ def create_listing_rejected_notification(listing):
         title="Listing rejected",
         message=f"Your listing '{listing.title}' was rejected. Reason: {reason}",
         listing=listing,
+        preference_key="listing_rejections",
     )
 
 
@@ -102,6 +113,7 @@ def create_listing_expired_notification(listing):
         title="Listing expired",
         message=f"Your listing '{listing.title}' has expired. You can renew it to make it active again.",
         listing=listing,
+        preference_key="renewals",
     )
 
 

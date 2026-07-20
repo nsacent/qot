@@ -1,8 +1,13 @@
+from django.conf import settings
 from django.contrib.auth import authenticate
 from django.contrib.auth.tokens import default_token_generator
 from django.utils.encoding import force_str
 from django.utils.http import urlsafe_base64_decode
 from rest_framework import serializers
+from rest_framework_simplejwt.serializers import TokenRefreshSerializer
+from rest_framework_simplejwt.tokens import RefreshToken
+from google.auth.transport import requests as google_requests
+from google.oauth2 import id_token as google_id_token
 
 from .models import User, UserProfile
 
@@ -14,6 +19,7 @@ class UserProfileSerializer(serializers.ModelSerializer):
             "avatar",
             "bio",
             "business_name",
+            "notification_preferences",
             "trust_score",
             "total_listings",
             "created_at",
@@ -25,6 +31,33 @@ class UserProfileSerializer(serializers.ModelSerializer):
             "created_at",
             "updated_at",
         ]
+
+    def validate_notification_preferences(self, value):
+        if not isinstance(value, dict):
+            raise serializers.ValidationError("Notification preferences must be an object.")
+
+        allowed_keys = {
+            "verification",
+            "messages",
+            "listing_approvals",
+            "listing_rejections",
+            "reports",
+            "renewals",
+            "marketing",
+        }
+        unknown_keys = set(value) - allowed_keys
+
+        if unknown_keys:
+            raise serializers.ValidationError(
+                f"Unknown notification preference: {sorted(unknown_keys)[0]}."
+            )
+
+        if any(not isinstance(enabled, bool) for enabled in value.values()):
+            raise serializers.ValidationError(
+                "Every notification preference must be true or false."
+            )
+
+        return value
 
 
 class UserSerializer(serializers.ModelSerializer):
@@ -102,6 +135,11 @@ class RegisterSerializer(serializers.ModelSerializer):
 class LoginSerializer(serializers.Serializer):
     identifier = serializers.CharField()
     password = serializers.CharField(write_only=True)
+    keep_signed_in = serializers.BooleanField(
+        default=False,
+        required=False,
+        write_only=True,
+    )
 
     def validate(self, attrs):
         identifier = attrs.get("identifier")
@@ -129,6 +167,62 @@ class LoginSerializer(serializers.Serializer):
 
         attrs["user"] = user
         return attrs
+
+
+class GoogleLoginSerializer(serializers.Serializer):
+    credential = serializers.CharField(write_only=True)
+    keep_signed_in = serializers.BooleanField(
+        default=False,
+        required=False,
+        write_only=True,
+    )
+
+    def validate(self, attrs):
+        client_id = settings.GOOGLE_OAUTH_CLIENT_ID
+
+        if not client_id:
+            raise serializers.ValidationError(
+                {"detail": "Google sign-in is not configured on the server."}
+            )
+
+        try:
+            identity = google_id_token.verify_oauth2_token(
+                attrs["credential"],
+                google_requests.Request(),
+                client_id,
+            )
+        except (ValueError, TypeError):
+            raise serializers.ValidationError(
+                {"detail": "Google could not verify this sign-in. Please try again."}
+            )
+
+        subject = str(identity.get("sub") or "").strip()
+        email = str(identity.get("email") or "").strip().lower()
+
+        if not subject or not email or identity.get("email_verified") is not True:
+            raise serializers.ValidationError(
+                {"detail": "Google did not provide a verified email address."}
+            )
+
+        attrs["identity"] = identity
+        return attrs
+
+
+class QOTTokenRefreshSerializer(TokenRefreshSerializer):
+    def validate(self, attrs):
+        data = super().validate(attrs)
+        rotated_token = data.get("refresh")
+
+        if not rotated_token:
+            return data
+
+        refresh = RefreshToken(rotated_token)
+
+        if refresh.get("keep_signed_in"):
+            refresh.set_exp(lifetime=settings.KEEP_SIGNED_IN_LIFETIME)
+            data["refresh"] = str(refresh)
+
+        return data
 
 
 class ProfileUpdateSerializer(serializers.ModelSerializer):

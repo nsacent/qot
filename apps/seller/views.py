@@ -1,4 +1,6 @@
+from django.db import transaction
 from django.db.models import Sum, Count
+from rest_framework.exceptions import ValidationError
 from rest_framework import generics, permissions, status
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -253,7 +255,11 @@ def get_request_list_values(request, keys):
 
 
 class SellerListingDetailAPIView(generics.RetrieveUpdateDestroyAPIView):
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [
+        permissions.IsAuthenticated,
+        IsNotBanned,
+        IsVerifiedUser,
+    ]
     parser_classes = [JSONParser, MultiPartParser, FormParser]
     lookup_field = "pk"
 
@@ -271,30 +277,49 @@ class SellerListingDetailAPIView(generics.RetrieveUpdateDestroyAPIView):
 
         return ListingCreateUpdateSerializer
 
+    @transaction.atomic
     def perform_update(self, serializer):
-        listing = serializer.save(seller=self.request.user)
-
         remove_image_ids = get_request_list_values(
             self.request,
             ["remove_image_ids", "deleted_images", "deleted_image_ids"],
         )
-
-        if remove_image_ids:
-            ListingImage.objects.filter(
-                listing=listing,
-                id__in=remove_image_ids,
-            ).delete()
-
         uploaded_images = (
             self.request.FILES.getlist("images")
             or self.request.FILES.getlist("new_images")
             or self.request.FILES.getlist("photos")
         )
 
+        listing = serializer.instance
+        images_to_remove = list(
+            ListingImage.objects.filter(
+                listing=listing,
+                id__in=remove_image_ids,
+            )
+        )
+        remaining_image_count = listing.images.count() - len(images_to_remove)
+
+        if remaining_image_count + len(uploaded_images) > 10:
+            raise ValidationError(
+                {"images": ["A listing can have a maximum of 10 images."]}
+            )
+
+        validated_images = []
+
+        for image in uploaded_images:
+            image_serializer = ListingImageSerializer(data={"image": image})
+            image_serializer.is_valid(raise_exception=True)
+            validated_images.append(image_serializer.validated_data["image"])
+
+        listing = serializer.save(seller=self.request.user)
+
+        for image in images_to_remove:
+            image.image.delete(save=False)
+            image.delete()
+
         if uploaded_images:
             start_order = ListingImage.objects.filter(listing=listing).count()
 
-            for index, image in enumerate(uploaded_images):
+            for index, image in enumerate(validated_images):
                 ListingImage.objects.create(
                     listing=listing,
                     image=image,
@@ -302,4 +327,4 @@ class SellerListingDetailAPIView(generics.RetrieveUpdateDestroyAPIView):
                 )
 
     def perform_destroy(self, instance):
-        instance.delete()
+        instance.soft_delete()

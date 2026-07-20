@@ -166,6 +166,9 @@ SIMPLE_JWT = {
     "AUTH_HEADER_TYPES": ("Bearer",),
 }
 
+KEEP_SIGNED_IN_LIFETIME = timedelta(days=365)
+GOOGLE_OAUTH_CLIENT_ID = config("GOOGLE_OAUTH_CLIENT_ID", default="")
+
 
 REDIS_URL = config("REDIS_URL", default="redis://127.0.0.1:6379/0")
 

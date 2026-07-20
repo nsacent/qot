@@ -5,6 +5,18 @@ from django.utils import timezone
 from .managers import UserManager
 
 
+def default_notification_preferences():
+    return {
+        "verification": True,
+        "messages": True,
+        "listing_approvals": True,
+        "listing_rejections": True,
+        "reports": True,
+        "renewals": True,
+        "marketing": False,
+    }
+
+
 class User(AbstractBaseUser, PermissionsMixin):
     ROLE_USER = "user"
     ROLE_ADMIN = "admin"
@@ -27,6 +39,14 @@ class User(AbstractBaseUser, PermissionsMixin):
     is_staff = models.BooleanField(default=False)
     is_verified = models.BooleanField(default=False)
     is_banned = models.BooleanField(default=False)
+
+    google_sub = models.CharField(
+        max_length=255,
+        unique=True,
+        null=True,
+        blank=True,
+        editable=False,
+    )
 
     banned_reason = models.TextField(null=True, blank=True)
 
@@ -59,6 +79,10 @@ class UserProfile(models.Model):
     avatar = models.ImageField(upload_to="users/avatars/", null=True, blank=True)
     bio = models.TextField(null=True, blank=True)
     business_name = models.CharField(max_length=150, null=True, blank=True)
+    notification_preferences = models.JSONField(
+        default=default_notification_preferences,
+        blank=True,
+    )
 
     trust_score = models.PositiveIntegerField(default=0)
     total_listings = models.PositiveIntegerField(default=0)
