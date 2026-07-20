@@ -24,6 +24,7 @@ class FavoriteListAPIView(generics.ListAPIView):
                 "listing",
                 "listing__seller",
                 "listing__category",
+                "listing__category__parent",
                 "listing__city",
             )
             .prefetch_related("listing__images")

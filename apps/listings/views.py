@@ -354,7 +354,7 @@ class ListingDetailAPIView(generics.RetrieveUpdateDestroyAPIView):
     def get_queryset(self):
         return (
             Listing.objects
-            .select_related("seller", "category", "city")
+            .select_related("seller", "category", "category__parent", "city")
             .prefetch_related("images", "attributes", "attributes__category_filter")
             .exclude(status=Listing.STATUS_DELETED)
         )

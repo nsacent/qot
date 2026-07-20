@@ -155,6 +155,7 @@ class ListingListSerializer(serializers.ModelSerializer):
         source="category.name",
         read_only=True,
     )
+    category_parent_name = serializers.SerializerMethodField()
     city_name = serializers.CharField(
         source="city.name",
         read_only=True,
@@ -173,6 +174,7 @@ class ListingListSerializer(serializers.ModelSerializer):
             "seller_name",
             "category",
             "category_name",
+            "category_parent_name",
             "city",
             "city_name",
             "price",
@@ -198,6 +200,10 @@ class ListingListSerializer(serializers.ModelSerializer):
             "featured_until",
             "created_at",
         ]
+
+    def get_category_parent_name(self, obj):
+        parent = getattr(obj.category, "parent", None)
+        return parent.name if parent else None
 
     def get_primary_image(self, obj):
         image = obj.images.filter(is_primary=True).first() or obj.images.first()
@@ -234,6 +240,7 @@ class ListingDetailSerializer(serializers.ModelSerializer):
         source="category.name",
         read_only=True,
     )
+    category_parent_name = serializers.SerializerMethodField()
     city_name = serializers.CharField(
         source="city.name",
         read_only=True,
@@ -249,6 +256,10 @@ class ListingDetailSerializer(serializers.ModelSerializer):
             return annotated_count
         return obj.images.count()
 
+    def get_category_parent_name(self, obj):
+        parent = getattr(obj.category, "parent", None)
+        return parent.name if parent else None
+
     class Meta:
         model = Listing
         fields = [
@@ -260,6 +271,7 @@ class ListingDetailSerializer(serializers.ModelSerializer):
             "seller_phone",
             "category",
             "category_name",
+            "category_parent_name",
             "city",
             "city_name",
             "description",

@@ -32,6 +32,8 @@ class CategoryFilterSerializer(serializers.ModelSerializer):
 
 
 class CategoryChildSerializer(serializers.ModelSerializer):
+    listings_count = serializers.IntegerField(read_only=True, default=0)
+
     class Meta:
         model = Category
         fields = [
@@ -40,11 +42,13 @@ class CategoryChildSerializer(serializers.ModelSerializer):
             "slug",
             "icon",
             "sort_order",
+            "listings_count",
         ]
 
 
 class CategorySerializer(serializers.ModelSerializer):
     children = CategoryChildSerializer(many=True, read_only=True)
+    listings_count = serializers.IntegerField(read_only=True, default=0)
 
     class Meta:
         model = Category
@@ -55,6 +59,7 @@ class CategorySerializer(serializers.ModelSerializer):
             "parent",
             "icon",
             "sort_order",
+            "listings_count",
             "children",
         ]
 
@@ -62,6 +67,7 @@ class CategorySerializer(serializers.ModelSerializer):
 class CategoryDetailSerializer(serializers.ModelSerializer):
     children = CategoryChildSerializer(many=True, read_only=True)
     filters = CategoryFilterSerializer(many=True, read_only=True)
+    listings_count = serializers.IntegerField(read_only=True, default=0)
 
     class Meta:
         model = Category
@@ -72,6 +78,7 @@ class CategoryDetailSerializer(serializers.ModelSerializer):
             "parent",
             "icon",
             "sort_order",
+            "listings_count",
             "children",
             "filters",
         ]
