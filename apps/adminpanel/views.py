@@ -22,6 +22,8 @@ from apps.chats.models import ChatReport, ChatBlock
 
 from .serializers import (
     AdminUserSerializer,
+    AdminUserDetailSerializer,
+    AdminUserUpdateSerializer,
     AdminListingSerializer,
     ListingRejectSerializer,
     UserBanSerializer,
@@ -440,6 +442,53 @@ class AdminUserListAPIView(generics.ListAPIView):
             queryset = queryset.filter(is_verified=False)
 
         return queryset
+
+
+class AdminUserDetailAPIView(generics.RetrieveAPIView):
+    serializer_class = AdminUserDetailSerializer
+    permission_classes = [permissions.IsAuthenticated, IsAdminOrModerator]
+
+    def get_queryset(self):
+        return User.objects.select_related("profile")
+
+    def patch(self, request, *args, **kwargs):
+        if not (
+            request.user.is_superuser
+            or request.user.role == User.ROLE_ADMIN
+        ):
+            return Response(
+                {"detail": "Only administrators can edit user accounts."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        user = self.get_object()
+
+        if user.is_superuser and not request.user.is_superuser:
+            return Response(
+                {"detail": "Only a superuser can edit another superuser account."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        serializer = AdminUserUpdateSerializer(
+            user,
+            data=request.data,
+            partial=True,
+            context={"request": request},
+        )
+        serializer.is_valid(raise_exception=True)
+        user = serializer.save()
+        calculate_user_trust_score(user)
+
+        return Response(
+            {
+                "message": "User account updated successfully.",
+                "user": AdminUserDetailSerializer(
+                    user,
+                    context={"request": request},
+                ).data,
+            },
+            status=status.HTTP_200_OK,
+        )
     
 
 class BanUserAPIView(APIView):
@@ -457,6 +506,41 @@ class BanUserAPIView(APIView):
         if user == request.user:
             return Response(
                 {"detail": "You cannot ban your own account."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        requester_is_admin = (
+            request.user.is_superuser
+            or request.user.role == User.ROLE_ADMIN
+        )
+
+        if user.is_superuser and not request.user.is_superuser:
+            return Response(
+                {"detail": "Only a superuser can restrict a superuser account."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        if (
+            user.role in {User.ROLE_ADMIN, User.ROLE_MODERATOR}
+            and not requester_is_admin
+        ):
+            return Response(
+                {"detail": "Only administrators can restrict staff accounts."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        if (
+            user.role == User.ROLE_ADMIN
+            and user.is_active
+            and not user.is_banned
+            and User.objects.filter(
+                role=User.ROLE_ADMIN,
+                is_active=True,
+                is_banned=False,
+            ).count() <= 1
+        ):
+            return Response(
+                {"detail": "The platform must retain at least one active administrator."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
@@ -487,6 +571,27 @@ class UnbanUserAPIView(APIView):
             return Response(
                 {"detail": "User not found."},
                 status=status.HTTP_404_NOT_FOUND,
+            )
+
+        if (
+            user.is_superuser
+            and not request.user.is_superuser
+        ):
+            return Response(
+                {"detail": "Only a superuser can restore a superuser account."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        if (
+            user.role in {User.ROLE_ADMIN, User.ROLE_MODERATOR}
+            and not (
+                request.user.is_superuser
+                or request.user.role == User.ROLE_ADMIN
+            )
+        ):
+            return Response(
+                {"detail": "Only administrators can restore staff accounts."},
+                status=status.HTTP_403_FORBIDDEN,
             )
 
         user.is_banned = False

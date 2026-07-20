@@ -1,7 +1,9 @@
+from django.db.models import Avg, Count, Sum
 from rest_framework import serializers
 
 from apps.accounts.models import User
 from apps.listings.models import Listing
+from apps.moderation.models import ListingReport
 from apps.reviews.models import SellerReview
 
 from apps.payments.models import Payment, PromotionPackage
@@ -24,6 +26,255 @@ class AdminUserSerializer(serializers.ModelSerializer):
             "is_staff",
             "date_joined",
         ]
+
+
+class AdminUserDetailSerializer(AdminUserSerializer):
+    avatar_url = serializers.SerializerMethodField()
+    business_name = serializers.CharField(
+        source="profile.business_name",
+        read_only=True,
+        default="",
+    )
+    bio = serializers.CharField(
+        source="profile.bio",
+        read_only=True,
+        default="",
+    )
+    trust_score = serializers.IntegerField(
+        source="profile.trust_score",
+        read_only=True,
+        default=0,
+    )
+    google_connected = serializers.SerializerMethodField()
+    listing_counts = serializers.SerializerMethodField()
+    stats = serializers.SerializerMethodField()
+    recent_listings = serializers.SerializerMethodField()
+    recent_payments = serializers.SerializerMethodField()
+    permissions = serializers.SerializerMethodField()
+
+    class Meta(AdminUserSerializer.Meta):
+        fields = AdminUserSerializer.Meta.fields + [
+            "last_login",
+            "updated_at",
+            "avatar_url",
+            "business_name",
+            "bio",
+            "trust_score",
+            "google_connected",
+            "listing_counts",
+            "stats",
+            "recent_listings",
+            "recent_payments",
+            "permissions",
+        ]
+        read_only_fields = fields
+
+    def get_avatar_url(self, obj):
+        profile = getattr(obj, "profile", None)
+
+        if not profile or not profile.avatar:
+            return None
+
+        request = self.context.get("request")
+
+        if request:
+            return request.build_absolute_uri(profile.avatar.url)
+
+        return profile.avatar.url
+
+    def get_google_connected(self, obj):
+        return bool(obj.google_sub)
+
+    def get_listing_counts(self, obj):
+        counts = obj.listings.values("status").annotate(total=Count("id"))
+        return {row["status"]: row["total"] for row in counts}
+
+    def get_stats(self, obj):
+        paid_payments = obj.payments.filter(status=Payment.STATUS_PAID)
+        paid_spend = paid_payments.aggregate(total=Sum("amount"))["total"] or 0
+        review_summary = obj.received_reviews.filter(is_visible=True).aggregate(
+            total=Count("id"),
+            average=Avg("rating"),
+        )
+
+        return {
+            "listings": obj.listings.exclude(status=Listing.STATUS_DELETED).count(),
+            "favorites": obj.favorites.count(),
+            "payments": obj.payments.count(),
+            "paid_spend": str(paid_spend),
+            "reviews": review_summary["total"] or 0,
+            "average_rating": review_summary["average"],
+            "reports_submitted": obj.listing_reports.count(),
+            "reports_against": ListingReport.objects.filter(
+                listing__seller=obj
+            ).count(),
+        }
+
+    def get_recent_listings(self, obj):
+        listings = (
+            obj.listings
+            .exclude(status=Listing.STATUS_DELETED)
+            .select_related("seller", "category", "city")
+            .prefetch_related("images")
+            .order_by("-created_at")[:6]
+        )
+        return AdminListingSerializer(
+            listings,
+            many=True,
+            context=self.context,
+        ).data
+
+    def get_recent_payments(self, obj):
+        payments = (
+            obj.payments
+            .select_related("user", "listing", "package")
+            .order_by("-created_at")[:6]
+        )
+        return AdminPaymentSerializer(
+            payments,
+            many=True,
+            context=self.context,
+        ).data
+
+    def get_permissions(self, obj):
+        request = self.context.get("request")
+        requester = getattr(request, "user", None)
+        requester_is_superuser = bool(
+            requester
+            and requester.is_authenticated
+            and requester.is_superuser
+        )
+        is_admin = bool(
+            requester
+            and requester.is_authenticated
+            and (
+                requester_is_superuser
+                or requester.role == User.ROLE_ADMIN
+            )
+        )
+        is_staff_target = obj.role in {
+            User.ROLE_ADMIN,
+            User.ROLE_MODERATOR,
+        }
+
+        return {
+            "is_self": bool(requester and requester.pk == obj.pk),
+            "can_edit": is_admin and (not obj.is_superuser or requester_is_superuser),
+            "can_manage_role": (
+                is_admin and not obj.is_superuser
+            ),
+            "can_manage_access": (
+                (is_admin or not is_staff_target)
+                and (not obj.is_superuser or requester_is_superuser)
+            ),
+        }
+
+
+class AdminUserUpdateSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = User
+        fields = [
+            "full_name",
+            "phone",
+            "email",
+            "role",
+            "is_active",
+            "is_verified",
+        ]
+        extra_kwargs = {
+            "phone": {"allow_null": True, "allow_blank": True, "required": False},
+            "email": {"allow_null": True, "allow_blank": True, "required": False},
+        }
+
+    def validate_full_name(self, value):
+        value = value.strip()
+
+        if not value:
+            raise serializers.ValidationError("Full name cannot be empty.")
+
+        return value
+
+    def validate_phone(self, value):
+        value = value.strip() if value else None
+
+        if value and User.objects.filter(phone=value).exclude(pk=self.instance.pk).exists():
+            raise serializers.ValidationError("This phone number is already in use.")
+
+        return value
+
+    def validate_email(self, value):
+        value = value.strip().lower() if value else None
+
+        if value and User.objects.filter(email__iexact=value).exclude(pk=self.instance.pk).exists():
+            raise serializers.ValidationError("This email address is already in use.")
+
+        return value
+
+    def validate(self, attrs):
+        request = self.context["request"]
+        target = self.instance
+        final_phone = attrs.get("phone", target.phone)
+        final_email = attrs.get("email", target.email)
+        final_role = attrs.get("role", target.role)
+        final_is_active = attrs.get("is_active", target.is_active)
+
+        if not final_phone and not final_email:
+            raise serializers.ValidationError(
+                "An account must have at least a phone number or email address."
+            )
+
+        if request.user.pk == target.pk:
+            if final_role != target.role:
+                raise serializers.ValidationError(
+                    {"role": "You cannot change your own administrator role."}
+                )
+
+            if not final_is_active:
+                raise serializers.ValidationError(
+                    {"is_active": "You cannot deactivate your own account."}
+                )
+
+        if target.is_superuser and final_role != User.ROLE_ADMIN:
+            raise serializers.ValidationError(
+                {"role": "A superuser must retain the administrator role."}
+            )
+
+        removing_active_admin = (
+            target.role == User.ROLE_ADMIN
+            and target.is_active
+            and not target.is_banned
+            and (
+                final_role != User.ROLE_ADMIN
+                or not final_is_active
+            )
+        )
+
+        if removing_active_admin:
+            active_admins = User.objects.filter(
+                role=User.ROLE_ADMIN,
+                is_active=True,
+                is_banned=False,
+            ).count()
+
+            if active_admins <= 1:
+                raise serializers.ValidationError(
+                    "The platform must retain at least one active administrator."
+                )
+
+        return attrs
+
+    def update(self, instance, validated_data):
+        instance = super().update(instance, validated_data)
+        should_be_staff = instance.is_superuser or instance.role in {
+            User.ROLE_ADMIN,
+            User.ROLE_MODERATOR,
+        }
+
+        if instance.is_staff != should_be_staff:
+            instance.is_staff = should_be_staff
+            instance.save(update_fields=["is_staff", "updated_at"])
+
+        return instance
 
 
 class AdminListingSerializer(serializers.ModelSerializer):
