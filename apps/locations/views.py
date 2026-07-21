@@ -7,6 +7,7 @@ from .serializers import RegionSerializer, CitySerializer
 class RegionListAPIView(generics.ListAPIView):
     serializer_class = RegionSerializer
     permission_classes = [permissions.AllowAny]
+    pagination_class = None
 
     def get_queryset(self):
         return (
@@ -20,6 +21,7 @@ class RegionListAPIView(generics.ListAPIView):
 class CityListAPIView(generics.ListAPIView):
     serializer_class = CitySerializer
     permission_classes = [permissions.AllowAny]
+    pagination_class = None
 
     def get_queryset(self):
         queryset = (

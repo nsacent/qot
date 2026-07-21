@@ -25,6 +25,8 @@ from .serializers import (
     AdminUserDetailSerializer,
     AdminUserUpdateSerializer,
     AdminListingSerializer,
+    AdminListingDetailSerializer,
+    AdminListingUpdateSerializer,
     ListingRejectSerializer,
     UserBanSerializer,
     FeatureListingSerializer,
@@ -290,6 +292,62 @@ class AdminListingListAPIView(generics.ListAPIView):
 
         return queryset.distinct()
 
+
+class AdminListingDetailAPIView(generics.RetrieveUpdateAPIView):
+    permission_classes = [permissions.IsAuthenticated, IsAdminOrModerator]
+
+    def get_serializer_class(self):
+        if self.request.method in {"PUT", "PATCH"}:
+            return AdminListingUpdateSerializer
+
+        return AdminListingDetailSerializer
+
+    def get_queryset(self):
+        return (
+            Listing.objects
+            .select_related(
+                "seller",
+                "seller__profile",
+                "category",
+                "category__parent",
+                "city",
+                "city__region",
+            )
+            .prefetch_related(
+                "images",
+                "attributes",
+                "attributes__category_filter",
+                "reports",
+            )
+        )
+
+    def update(self, request, *args, **kwargs):
+        partial = kwargs.pop("partial", False)
+        listing = self.get_object()
+
+        if listing.status == Listing.STATUS_DELETED:
+            return Response(
+                {"detail": "Deleted listings cannot be edited."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        serializer = self.get_serializer(
+            listing,
+            data=request.data,
+            partial=partial,
+        )
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        listing.refresh_from_db()
+
+        return Response(
+            AdminListingDetailSerializer(
+                listing,
+                context={"request": request},
+            ).data,
+            status=status.HTTP_200_OK,
+        )
+
 class ApproveListingAPIView(APIView):
     permission_classes = [permissions.IsAuthenticated, IsAdminOrModerator]
 
@@ -336,7 +394,17 @@ class RejectListingAPIView(APIView):
 
         listing.status = Listing.STATUS_REJECTED
         listing.rejection_reason = serializer.validated_data["rejection_reason"]
-        listing.save(update_fields=["status", "rejection_reason", "updated_at"])
+        listing.is_featured = False
+        listing.featured_until = None
+        listing.save(
+            update_fields=[
+                "status",
+                "rejection_reason",
+                "is_featured",
+                "featured_until",
+                "updated_at",
+            ]
+        )
 
         create_listing_rejected_notification(listing)
         calculate_user_trust_score(listing.seller)
@@ -364,6 +432,12 @@ class FeatureListingAPIView(APIView):
         serializer = FeatureListingSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
+        if listing.status != Listing.STATUS_ACTIVE:
+            return Response(
+                {"detail": "Only approved active listings can be featured."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
         days = serializer.validated_data["days"]
 
         listing.is_featured = True
@@ -374,6 +448,49 @@ class FeatureListingAPIView(APIView):
             {
                 "message": "Listing featured successfully.",
                 "listing": AdminListingSerializer(listing).data,
+            },
+            status=status.HTTP_200_OK,
+        )
+
+
+class DeleteListingAPIView(APIView):
+    permission_classes = [permissions.IsAuthenticated, IsAdminOrModerator]
+
+    def post(self, request, pk):
+        try:
+            listing = Listing.objects.get(pk=pk)
+        except Listing.DoesNotExist:
+            return Response(
+                {"detail": "Listing not found."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        if listing.status == Listing.STATUS_DELETED:
+            return Response(
+                {"detail": "This listing has already been deleted."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        listing.status = Listing.STATUS_DELETED
+        listing.is_featured = False
+        listing.featured_until = None
+        listing.save(
+            update_fields=[
+                "status",
+                "is_featured",
+                "featured_until",
+                "updated_at",
+            ]
+        )
+        calculate_user_trust_score(listing.seller)
+
+        return Response(
+            {
+                "message": "Listing deleted successfully.",
+                "listing": AdminListingDetailSerializer(
+                    listing,
+                    context={"request": request},
+                ).data,
             },
             status=status.HTTP_200_OK,
         )

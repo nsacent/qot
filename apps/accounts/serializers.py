@@ -1,9 +1,12 @@
+import re
+
 from django.conf import settings
 from django.contrib.auth import authenticate
 from django.contrib.auth.tokens import default_token_generator
 from django.utils.encoding import force_str
 from django.utils.http import urlsafe_base64_decode
 from rest_framework import serializers
+from rest_framework.exceptions import AuthenticationFailed, PermissionDenied
 from rest_framework_simplejwt.serializers import TokenRefreshSerializer
 from rest_framework_simplejwt.tokens import RefreshToken
 from google.auth.transport import requests as google_requests
@@ -86,6 +89,7 @@ class UserSerializer(serializers.ModelSerializer):
 
 
 class RegisterSerializer(serializers.ModelSerializer):
+    phone = serializers.CharField(required=True, allow_blank=False)
     password = serializers.CharField(write_only=True, min_length=8)
     password_confirm = serializers.CharField(write_only=True, min_length=8)
 
@@ -118,6 +122,33 @@ class RegisterSerializer(serializers.ModelSerializer):
             )
 
         return attrs
+
+    def validate_phone(self, value):
+        if not value:
+            return value
+
+        digits = re.sub(r"\D", "", value)
+
+        if digits.startswith("256"):
+            national_number = digits[3:]
+        elif digits.startswith("0"):
+            national_number = digits[1:]
+        else:
+            national_number = digits
+
+        if not re.fullmatch(r"7\d{8}", national_number):
+            raise serializers.ValidationError(
+                "Enter a valid Ugandan mobile number, such as +256700000001."
+            )
+
+        normalized_phone = f"+256{national_number}"
+
+        if User.objects.filter(phone=normalized_phone).exists():
+            raise serializers.ValidationError(
+                "An account with this phone number already exists."
+            )
+
+        return normalized_phone
 
     def create(self, validated_data):
         validated_data.pop("password_confirm")
@@ -154,16 +185,24 @@ class LoginSerializer(serializers.Serializer):
                 user = User.objects.filter(email__iexact=identifier).first()
 
         if user is None:
-            raise serializers.ValidationError("Invalid login credentials.")
+            raise AuthenticationFailed(
+                "The phone/email or password is incorrect."
+            )
 
         if not user.check_password(password):
-            raise serializers.ValidationError("Invalid login credentials.")
+            raise AuthenticationFailed(
+                "The phone/email or password is incorrect."
+            )
 
         if not user.is_active:
-            raise serializers.ValidationError("This account is inactive.")
+            raise PermissionDenied(
+                "This account is inactive. Please contact QOT support."
+            )
 
         if user.is_banned:
-            raise serializers.ValidationError("This account has been banned.")
+            raise PermissionDenied(
+                "This account has been banned. Please contact QOT support."
+            )
 
         attrs["user"] = user
         return attrs

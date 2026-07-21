@@ -10,6 +10,75 @@ from rest_framework_simplejwt.tokens import RefreshToken
 from .models import User
 
 
+class RegistrationTests(APITestCase):
+    register_url = "/api/v1/auth/register/"
+
+    def registration_data(self, phone):
+        digits = "".join(character for character in phone if character.isdigit())
+
+        return {
+            "phone": phone,
+            "email": f"user-{digits[-6:]}@example.com",
+            "full_name": "Ugandan User",
+            "password": "strong-test-password",
+            "password_confirm": "strong-test-password",
+        }
+
+    def test_registration_normalizes_local_ugandan_phone_number(self):
+        response = self.client.post(
+            self.register_url,
+            self.registration_data("0700 000 123"),
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data["user"]["phone"], "+256700000123")
+        self.assertTrue(User.objects.filter(phone="+256700000123").exists())
+
+    def test_registration_normalizes_ugandan_country_code(self):
+        response = self.client.post(
+            self.register_url,
+            self.registration_data("256 701 000 123"),
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data["user"]["phone"], "+256701000123")
+
+    def test_registration_rejects_non_ugandan_phone_number(self):
+        response = self.client.post(
+            self.register_url,
+            self.registration_data("+254700000123"),
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(
+            str(response.data["phone"][0]),
+            "Enter a valid Ugandan mobile number, such as +256700000001.",
+        )
+
+    def test_registration_rejects_duplicate_phone_after_normalizing(self):
+        User.objects.create_user(
+            phone="+256702000123",
+            email="existing@example.com",
+            full_name="Existing User",
+            password="strong-test-password",
+        )
+
+        response = self.client.post(
+            self.register_url,
+            self.registration_data("0702 000 123"),
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(
+            str(response.data["phone"][0]),
+            "An account with this phone number already exists.",
+        )
+
+
 class AuthenticationSessionTests(APITestCase):
     login_url = "/api/v1/auth/login/"
     refresh_url = "/api/v1/auth/token/refresh/"
@@ -68,6 +137,46 @@ class AuthenticationSessionTests(APITestCase):
 
         self.assertTrue(rotated["keep_signed_in"])
         self.assertEqual(rotated_lifetime, settings.KEEP_SIGNED_IN_LIFETIME)
+
+    def test_wrong_password_returns_a_clear_error(self):
+        response = self.client.post(
+            self.login_url,
+            {
+                "identifier": self.user.email,
+                "password": "wrong-password",
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
+        self.assertEqual(
+            response.data["detail"],
+            "The phone/email or password is incorrect.",
+        )
+
+    def test_inactive_account_returns_a_clear_error(self):
+        self.user.is_active = False
+        self.user.save(update_fields=["is_active"])
+
+        response = self.login()
+
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertEqual(
+            response.data["detail"],
+            "This account is inactive. Please contact QOT support.",
+        )
+
+    def test_banned_account_returns_a_clear_error(self):
+        self.user.is_banned = True
+        self.user.save(update_fields=["is_banned"])
+
+        response = self.login()
+
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertEqual(
+            response.data["detail"],
+            "This account has been banned. Please contact QOT support.",
+        )
 
 
 class NotificationPreferenceTests(APITestCase):

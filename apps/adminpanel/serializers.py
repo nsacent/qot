@@ -1,8 +1,14 @@
+from django.db import transaction
 from django.db.models import Avg, Count, Sum
 from rest_framework import serializers
 
 from apps.accounts.models import User
 from apps.listings.models import Listing
+from apps.listings.serializers import (
+    ListingCreateUpdateSerializer,
+    ListingAttributeSerializer,
+    ListingImageSerializer,
+)
 from apps.moderation.models import ListingReport
 from apps.reviews.models import SellerReview
 
@@ -323,6 +329,86 @@ class AdminListingSerializer(serializers.ModelSerializer):
             return request.build_absolute_uri(image.image.url)
 
         return image.image.url
+
+
+class AdminListingDetailSerializer(AdminListingSerializer):
+    seller_email = serializers.EmailField(source="seller.email", read_only=True)
+    seller_role = serializers.CharField(source="seller.role", read_only=True)
+    seller_is_active = serializers.BooleanField(
+        source="seller.is_active",
+        read_only=True,
+    )
+    seller_is_verified = serializers.BooleanField(
+        source="seller.is_verified",
+        read_only=True,
+    )
+    seller_is_banned = serializers.BooleanField(
+        source="seller.is_banned",
+        read_only=True,
+    )
+    category_parent_name = serializers.SerializerMethodField()
+    region_name = serializers.CharField(source="city.region.name", read_only=True)
+    images = ListingImageSerializer(many=True, read_only=True)
+    attributes = ListingAttributeSerializer(many=True, read_only=True)
+    image_count = serializers.SerializerMethodField()
+    reports_count = serializers.SerializerMethodField()
+    open_reports_count = serializers.SerializerMethodField()
+
+    class Meta(AdminListingSerializer.Meta):
+        fields = AdminListingSerializer.Meta.fields + [
+            "seller_email",
+            "seller_role",
+            "seller_is_active",
+            "seller_is_verified",
+            "seller_is_banned",
+            "category_parent_name",
+            "region_name",
+            "description",
+            "is_negotiable",
+            "expires_at",
+            "sold_at",
+            "images",
+            "image_count",
+            "attributes",
+            "reports_count",
+            "open_reports_count",
+        ]
+        read_only_fields = fields
+
+    def get_category_parent_name(self, obj):
+        parent = getattr(obj.category, "parent", None)
+        return parent.name if parent else None
+
+    def get_image_count(self, obj):
+        return obj.images.count()
+
+    def get_reports_count(self, obj):
+        return obj.reports.count()
+
+    def get_open_reports_count(self, obj):
+        return obj.reports.filter(is_resolved=False).count()
+
+
+class AdminListingUpdateSerializer(ListingCreateUpdateSerializer):
+    """Edit listing content without changing its moderation lifecycle."""
+
+    @transaction.atomic
+    def update(self, instance, validated_data):
+        attributes_data = validated_data.pop("attributes", None)
+        updated_fields = []
+
+        for attribute, value in validated_data.items():
+            setattr(instance, attribute, value)
+            updated_fields.append(attribute)
+
+        if updated_fields:
+            instance.save(update_fields=[*updated_fields, "updated_at"])
+
+        if attributes_data is not None:
+            instance.attributes.all().delete()
+            self._save_attributes(instance, attributes_data)
+
+        return instance
 
 
 class ListingRejectSerializer(serializers.Serializer):

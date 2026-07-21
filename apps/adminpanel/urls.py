@@ -3,11 +3,13 @@ from django.urls import path
 from .views import (
     AdminDashboardAPIView,
     AdminListingListAPIView,
+    AdminListingDetailAPIView,
     PendingListingListAPIView,
     ApproveListingAPIView,
     RejectListingAPIView,
     FeatureListingAPIView,
     UnfeatureListingAPIView,
+    DeleteListingAPIView,
     AdminUserListAPIView,
     AdminUserDetailAPIView,
     BanUserAPIView,
@@ -36,11 +38,13 @@ urlpatterns = [
 
     path("listings/", AdminListingListAPIView.as_view(), name="listing_list"),
     path("listings/pending/", PendingListingListAPIView.as_view(), name="pending_listing_list"),
+    path("listings/<int:pk>/", AdminListingDetailAPIView.as_view(), name="listing_detail"),
     path("listings/<int:pk>/approve/", ApproveListingAPIView.as_view(), name="approve_listing"),
     path("listings/<int:pk>/reject/", RejectListingAPIView.as_view(), name="reject_listing"),
 
     path("listings/<int:pk>/feature/", FeatureListingAPIView.as_view(), name="feature_listing"),
     path("listings/<int:pk>/unfeature/", UnfeatureListingAPIView.as_view(), name="unfeature_listing"),
+    path("listings/<int:pk>/delete/", DeleteListingAPIView.as_view(), name="delete_listing"),
 
     path("users/", AdminUserListAPIView.as_view(), name="user_list"),
     path("users/<int:pk>/", AdminUserDetailAPIView.as_view(), name="user_detail"),
