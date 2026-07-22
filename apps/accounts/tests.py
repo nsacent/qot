@@ -7,6 +7,7 @@ from unittest.mock import patch
 
 from django.conf import settings
 from django.contrib.auth.hashers import check_password
+from django.core import mail
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import override_settings
 from django.utils import timezone
@@ -87,6 +88,33 @@ class RegistrationTests(APITestCase):
         self.assertEqual(
             str(response.data["phone"][0]),
             "An account with this phone number already exists.",
+        )
+
+
+@override_settings(
+    EMAIL_BACKEND="django.core.mail.backends.locmem.EmailBackend",
+    FRONTEND_URL="https://qot.ug",
+)
+class PasswordResetRequestTests(APITestCase):
+    def test_reset_email_uses_the_account_route(self):
+        user = User.objects.create_user(
+            phone="+256700000444",
+            email="password-reset@example.com",
+            full_name="Password Reset User",
+            password="strong-test-password",
+        )
+
+        response = self.client.post(
+            "/api/v1/auth/password-reset/request/",
+            {"email": user.email},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(mail.outbox), 1)
+        self.assertIn(
+            "https://qot.ug/account/reset-password?uid=",
+            mail.outbox[0].body,
         )
 
 

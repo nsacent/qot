@@ -258,7 +258,10 @@ class PasswordResetRequestAPIView(APIView):
             uid = urlsafe_base64_encode(force_bytes(user.pk))
             token = default_token_generator.make_token(user)
 
-            reset_link = f"{settings.FRONTEND_URL}/reset-password?uid={uid}&token={token}"
+            reset_link = (
+                f"{settings.FRONTEND_URL}/account/reset-password"
+                f"?uid={uid}&token={token}"
+            )
 
             send_mail(
                 subject="Reset your QOT password",
