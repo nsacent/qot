@@ -7,6 +7,7 @@ from rest_framework.views import APIView
 
 from apps.common.permissions import IsNotBanned, IsVerifiedUser
 from apps.listings.models import Listing, ListingImage
+from apps.listings.image_fingerprints import validate_image_for_user
 
 from apps.chats.models import ChatThread
 
@@ -304,11 +305,20 @@ class SellerListingDetailAPIView(generics.RetrieveUpdateDestroyAPIView):
             )
 
         validated_images = []
+        seen_image_hashes = set()
 
         for image in uploaded_images:
             image_serializer = ListingImageSerializer(data={"image": image})
             image_serializer.is_valid(raise_exception=True)
-            validated_images.append(image_serializer.validated_data["image"])
+            validated_image = image_serializer.validated_data["image"]
+            content_hash = validate_image_for_user(
+                user=self.request.user,
+                image_file=validated_image,
+                exclude_listing_id=listing.id,
+                seen_hashes=seen_image_hashes,
+                error_field="images",
+            )
+            validated_images.append((validated_image, content_hash))
 
         listing = serializer.save(seller=self.request.user)
 
@@ -319,10 +329,11 @@ class SellerListingDetailAPIView(generics.RetrieveUpdateDestroyAPIView):
         if uploaded_images:
             start_order = ListingImage.objects.filter(listing=listing).count()
 
-            for index, image in enumerate(validated_images):
+            for index, (image, content_hash) in enumerate(validated_images):
                 ListingImage.objects.create(
                     listing=listing,
                     image=image,
+                    content_hash=content_hash,
                     sort_order=start_order + index,
                 )
 

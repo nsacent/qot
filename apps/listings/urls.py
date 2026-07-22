@@ -12,6 +12,7 @@ from .views import (
     RelistListingAPIView,
     RenewListingAPIView,
     PendingListingImageAPIView,
+    ListingDraftAPIView,
 )
 from apps.moderation.views import ListingReportCreateAPIView
 
@@ -23,6 +24,7 @@ urlpatterns = [
     path("", ListingListCreateAPIView.as_view(), name="listing_list_create"),
     path("images/stage/", PendingListingImageAPIView.as_view(), name="stage_listing_image"),
     path("images/stage/<int:pk>/", PendingListingImageAPIView.as_view(), name="delete_staged_listing_image"),
+    path("draft/", ListingDraftAPIView.as_view(), name="listing_draft"),
     path("<int:pk>/", ListingDetailAPIView.as_view(), name="listing_detail"),
     path("<int:pk>/mark-sold/", MarkListingSoldAPIView.as_view(), name="mark_sold"),
     path("<int:pk>/renew/", RenewListingAPIView.as_view(), name="renew_listing"),

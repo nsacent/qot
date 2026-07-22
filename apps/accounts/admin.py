@@ -1,7 +1,7 @@
 from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin as BaseUserAdmin
 
-from .models import User, UserProfile
+from .models import User, UserFollow, UserProfile
 
 
 @admin.register(User)
@@ -14,6 +14,8 @@ class UserAdmin(BaseUserAdmin):
         "role",
         "is_active",
         "is_verified",
+        "phone_verified_at",
+        "email_verified_at",
         "is_banned",
         "is_staff",
         "date_joined",
@@ -58,6 +60,8 @@ class UserAdmin(BaseUserAdmin):
                     "role",
                     "is_active",
                     "is_verified",
+                    "phone_verified_at",
+                    "email_verified_at",
                     "is_banned",
                     "banned_reason",
                     "is_staff",
@@ -89,6 +93,8 @@ class UserAdmin(BaseUserAdmin):
     readonly_fields = [
         "last_login",
         "date_joined",
+        "phone_verified_at",
+        "email_verified_at",
         "updated_at",
     ]
 
@@ -135,3 +141,15 @@ class UserProfileAdmin(admin.ModelAdmin):
         "created_at",
         "updated_at",
     ]
+
+
+@admin.register(UserFollow)
+class UserFollowAdmin(admin.ModelAdmin):
+    list_display = ["follower", "following", "created_at"]
+    search_fields = [
+        "follower__full_name",
+        "follower__email",
+        "following__full_name",
+        "following__email",
+    ]
+    readonly_fields = ["created_at"]

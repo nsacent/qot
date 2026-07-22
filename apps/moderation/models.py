@@ -4,18 +4,26 @@ from django.db import models
 
 class ListingReport(models.Model):
     REASON_SCAM = "scam"
+    REASON_FAKE = "fake"
+    REASON_WRONG_PRICE = "wrong_price"
     REASON_DUPLICATE = "duplicate"
     REASON_WRONG_CATEGORY = "wrong_category"
     REASON_PROHIBITED = "prohibited"
     REASON_SOLD_BUT_ACTIVE = "sold_but_active"
+    REASON_SUSPICIOUS_SELLER = "suspicious_seller"
+    REASON_OFFENSIVE = "offensive"
     REASON_OTHER = "other"
 
     REASON_CHOICES = [
         (REASON_SCAM, "Scam or Fraud"),
+        (REASON_FAKE, "Fake or Misleading Advert"),
+        (REASON_WRONG_PRICE, "Wrong or Misleading Price"),
         (REASON_DUPLICATE, "Duplicate Listing"),
         (REASON_WRONG_CATEGORY, "Wrong Category"),
         (REASON_PROHIBITED, "Prohibited Item"),
         (REASON_SOLD_BUT_ACTIVE, "Sold but Still Active"),
+        (REASON_SUSPICIOUS_SELLER, "Suspicious Seller"),
+        (REASON_OFFENSIVE, "Offensive or Inappropriate Content"),
         (REASON_OTHER, "Other"),
     ]
 

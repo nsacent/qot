@@ -12,7 +12,10 @@ class Command(BaseCommand):
     def handle(self, *args, **options):
         cutoff = timezone.now() - timedelta(hours=24)
         pending_images = list(
-            PendingListingImage.objects.filter(created_at__lt=cutoff)
+            PendingListingImage.objects.filter(
+                created_at__lt=cutoff,
+                reserved_for_draft=False,
+            )
         )
 
         for pending_image in pending_images:

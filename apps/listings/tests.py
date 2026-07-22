@@ -1,4 +1,5 @@
 from datetime import timedelta
+from io import BytesIO
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
@@ -6,6 +7,7 @@ from django.core.files.uploadedfile import SimpleUploadedFile
 from django.core.management import call_command
 from django.test import override_settings
 from django.utils import timezone
+from PIL import Image
 from rest_framework import status
 from rest_framework.test import APITestCase
 
@@ -13,7 +15,7 @@ from apps.accounts.models import User
 from apps.categories.models import Category
 from apps.locations.models import City, Region
 
-from .models import Listing, ListingImage, PendingListingImage
+from .models import Listing, ListingDraft, ListingImage, PendingListingImage
 
 
 class ListingLifecycleTests(APITestCase):
@@ -69,6 +71,15 @@ class ListingLifecycleTests(APITestCase):
 
     def authenticate_owner(self):
         self.client.force_authenticate(self.owner)
+
+    def make_image(self, name="photo.png", color=(249, 115, 22)):
+        image_bytes = BytesIO()
+        Image.new("RGB", (12, 12), color=color).save(image_bytes, format="PNG")
+        return SimpleUploadedFile(
+            name,
+            image_bytes.getvalue(),
+            content_type="image/png",
+        )
 
     def test_mine_filter_requires_authentication(self):
         self.create_listing()
@@ -245,3 +256,130 @@ class ListingLifecycleTests(APITestCase):
 
         self.assertFalse(PendingListingImage.objects.filter(pk=pending_image.pk).exists())
         self.assertFalse(image_path.exists())
+
+    def test_incomplete_listing_draft_can_be_saved_and_restored(self):
+        self.authenticate_owner()
+
+        save_response = self.client.put(
+            "/api/v1/listings/draft/",
+            {
+                "data": {
+                    "title": "Partly completed advert",
+                    "description": "",
+                    "price": "",
+                    "category": "",
+                    "city": str(self.city.id),
+                    "condition": "used",
+                    "is_negotiable": False,
+                    "category_filter_values": {},
+                },
+                "staged_image_ids": [],
+            },
+            format="json",
+        )
+        restore_response = self.client.get("/api/v1/listings/draft/")
+
+        self.assertEqual(save_response.status_code, status.HTTP_200_OK)
+        self.assertEqual(restore_response.status_code, status.HTTP_200_OK)
+        self.assertEqual(
+            restore_response.data["draft"]["data"]["title"],
+            "Partly completed advert",
+        )
+
+    def test_draft_photos_are_reserved_until_draft_is_deleted(self):
+        self.authenticate_owner()
+        pending_image = PendingListingImage.objects.create(
+            user=self.owner,
+            image=SimpleUploadedFile("draft.jpg", b"draft-image-content"),
+        )
+
+        save_response = self.client.put(
+            "/api/v1/listings/draft/",
+            {"data": {"title": "Draft"}, "staged_image_ids": [pending_image.id]},
+            format="json",
+        )
+        pending_image.refresh_from_db()
+
+        self.assertEqual(save_response.status_code, status.HTTP_200_OK)
+        self.assertTrue(pending_image.reserved_for_draft)
+        self.assertTrue(ListingDraft.objects.filter(user=self.owner).exists())
+
+        delete_response = self.client.delete("/api/v1/listings/draft/")
+        pending_image.refresh_from_db()
+
+        self.assertEqual(delete_response.status_code, status.HTTP_204_NO_CONTENT)
+        self.assertFalse(pending_image.reserved_for_draft)
+        self.assertFalse(ListingDraft.objects.filter(user=self.owner).exists())
+
+    def test_staged_photo_rejects_image_used_by_another_ad(self):
+        existing_listing = self.create_listing()
+        ListingImage.objects.create(
+            listing=existing_listing,
+            image=self.make_image("existing.png"),
+        )
+        self.authenticate_owner()
+
+        response = self.client.post(
+            "/api/v1/listings/images/stage/",
+            {"image": self.make_image("same-photo.png")},
+            format="multipart",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("already used in another", str(response.data))
+        self.assertEqual(PendingListingImage.objects.filter(user=self.owner).count(), 0)
+
+    def test_duplicate_image_check_is_scoped_to_the_current_user(self):
+        other_listing = self.create_listing(seller=self.other_user)
+        ListingImage.objects.create(
+            listing=other_listing,
+            image=self.make_image("other-user-photo.png"),
+        )
+        self.authenticate_owner()
+
+        response = self.client.post(
+            "/api/v1/listings/images/stage/",
+            {"image": self.make_image("my-photo.png")},
+            format="multipart",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        pending_image = PendingListingImage.objects.get(pk=response.data["id"])
+        self.assertEqual(len(pending_image.content_hash), 64)
+
+    def test_same_photo_cannot_be_staged_twice(self):
+        self.authenticate_owner()
+
+        first_response = self.client.post(
+            "/api/v1/listings/images/stage/",
+            {"image": self.make_image("first.png", color=(30, 64, 175))},
+            format="multipart",
+        )
+        duplicate_response = self.client.post(
+            "/api/v1/listings/images/stage/",
+            {"image": self.make_image("duplicate.png", color=(30, 64, 175))},
+            format="multipart",
+        )
+
+        self.assertEqual(first_response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(duplicate_response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("already been selected", str(duplicate_response.data))
+
+    def test_existing_ad_upload_rejects_photo_from_another_ad(self):
+        source_listing = self.create_listing()
+        target_listing = self.create_listing()
+        ListingImage.objects.create(
+            listing=source_listing,
+            image=self.make_image("source.png", color=(16, 185, 129)),
+        )
+        self.authenticate_owner()
+
+        response = self.client.post(
+            f"/api/v1/listings/{target_listing.id}/images/",
+            {"image": self.make_image("duplicate.png", color=(16, 185, 129))},
+            format="multipart",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("already used in another", str(response.data))
+        self.assertEqual(target_listing.images.count(), 0)

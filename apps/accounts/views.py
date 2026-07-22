@@ -1,3 +1,5 @@
+from smtplib import SMTPException
+
 from rest_framework import generics, permissions, status
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -5,6 +7,7 @@ from rest_framework.views import APIView
 from django.contrib.auth.tokens import default_token_generator
 from django.core.mail import send_mail
 from django.conf import settings
+from django.utils import timezone
 from django.utils.encoding import force_bytes
 from django.utils.http import urlsafe_base64_encode
 
@@ -24,7 +27,16 @@ from .serializers import (
     ConfirmVerificationCodeSerializer,
 )
 
-from .services import create_email_verification_code, verify_email_code
+from .services import (
+    OTPRateLimitError,
+    create_email_verification_code,
+    create_phone_verification_code,
+    mask_email,
+    mask_phone,
+    verify_email_code,
+    verify_phone_code,
+)
+from .sms import SMSConfigurationError, SMSDeliveryError
 
 
 def get_tokens_for_user(user, keep_signed_in=False):
@@ -152,7 +164,13 @@ class GoogleLoginAPIView(APIView):
 
             user.google_sub = google_sub
             user.is_verified = True
-            user.save(update_fields=["google_sub", "is_verified", "updated_at"])
+            user.email_verified_at = timezone.now()
+            user.save(update_fields=[
+                "google_sub",
+                "is_verified",
+                "email_verified_at",
+                "updated_at",
+            ])
 
         if user is None:
             user = User.objects.create_user(
@@ -161,7 +179,21 @@ class GoogleLoginAPIView(APIView):
                 password=None,
                 google_sub=google_sub,
                 is_verified=True,
+                email_verified_at=timezone.now(),
             )
+
+        if (
+            user.email
+            and user.email.lower() == email
+            and not user.email_verified
+        ):
+            user.email_verified_at = timezone.now()
+            user.is_verified = True
+            user.save(update_fields=[
+                "email_verified_at",
+                "is_verified",
+                "updated_at",
+            ])
 
         tokens = get_tokens_for_user(
             user,
@@ -285,23 +317,68 @@ class SendVerificationCodeAPIView(APIView):
         serializer.is_valid(raise_exception=True)
 
         user = request.user
+        channel = serializer.validated_data["channel"]
 
-        if user.is_verified:
+        if channel == "phone" and user.phone_verified:
             return Response(
-                {"detail": "Account is already verified."},
+                {"detail": "This phone number is already verified."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        if not user.email:
+        if channel == "email" and user.email_verified:
             return Response(
-                {"detail": "Email address is required for verification."},
+                {"detail": "This email address is already verified."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        create_email_verification_code(user)
+        if channel == "phone" and not user.phone:
+            return Response(
+                {"detail": "A phone number is required for verification."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if channel == "email" and not user.email:
+            return Response(
+                {"detail": "An email address is required for verification."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            if channel == "phone":
+                create_phone_verification_code(user)
+            else:
+                create_email_verification_code(user)
+        except OTPRateLimitError as error:
+            return Response(
+                {
+                    "detail": str(error),
+                    "retry_after": error.retry_after,
+                },
+                status=status.HTTP_429_TOO_MANY_REQUESTS,
+            )
+        except (SMSConfigurationError, SMSDeliveryError) as error:
+            return Response(
+                {"detail": str(error)},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+        except (SMTPException, OSError):
+            return Response(
+                {"detail": "Email delivery is temporarily unavailable."},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
 
         return Response(
-            {"message": "Verification code sent successfully."},
+            {
+                "message": "Verification code sent successfully.",
+                "channel": channel,
+                "destination": (
+                    mask_phone(user.phone)
+                    if channel == "phone"
+                    else mask_email(user.email)
+                ),
+                "expires_in": int(settings.PHONE_OTP_EXPIRY_MINUTES) * 60,
+                "resend_after": int(settings.PHONE_OTP_RESEND_SECONDS),
+            },
             status=status.HTTP_200_OK,
         )
 
@@ -313,10 +390,9 @@ class ConfirmVerificationCodeAPIView(APIView):
         serializer = ConfirmVerificationCodeSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
-        success, message = verify_email_code(
-            request.user,
-            serializer.validated_data["code"],
-        )
+        channel = serializer.validated_data["channel"]
+        verify_code = verify_phone_code if channel == "phone" else verify_email_code
+        success, message = verify_code(request.user, serializer.validated_data["code"])
 
         if not success:
             return Response(

@@ -41,3 +41,19 @@ class SavedSearchSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError("Filters must be an object.")
 
         return value
+
+    def validate(self, attrs):
+        request = self.context.get("request")
+        name = attrs.get("name", "").strip()
+
+        if request and request.user.is_authenticated and name:
+            queryset = SavedSearch.objects.filter(user=request.user, name=name)
+            if self.instance:
+                queryset = queryset.exclude(pk=self.instance.pk)
+
+            if queryset.exists():
+                raise serializers.ValidationError(
+                    {"name": "This search is already saved."}
+                )
+
+        return attrs

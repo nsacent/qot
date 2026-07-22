@@ -4,7 +4,7 @@ from django.utils import timezone
 from PIL import Image
 from rest_framework import serializers
 
-from .models import Listing, ListingImage, ListingAttribute
+from .models import Listing, ListingDraft, ListingImage, ListingAttribute, PendingListingImage
 
 
 class ListingImageSerializer(serializers.ModelSerializer):
@@ -84,6 +84,44 @@ class ListingImageSerializer(serializers.ModelSerializer):
         image.seek(0)
 
         return image
+
+
+class ListingDraftSerializer(serializers.ModelSerializer):
+    staged_images = serializers.SerializerMethodField()
+
+    class Meta:
+        model = ListingDraft
+        fields = [
+            "id",
+            "data",
+            "staged_image_ids",
+            "staged_images",
+            "created_at",
+            "updated_at",
+        ]
+        read_only_fields = fields
+
+    def get_staged_images(self, obj):
+        images = PendingListingImage.objects.filter(
+            user=obj.user,
+            id__in=obj.staged_image_ids,
+        )
+        images_by_id = {image.id: image for image in images}
+        request = self.context.get("request")
+        result = []
+
+        for image_id in obj.staged_image_ids:
+            image = images_by_id.get(image_id)
+            if not image or not image.image:
+                continue
+
+            image_url = image.image.url
+            if request:
+                image_url = request.build_absolute_uri(image_url)
+
+            result.append({"id": image.id, "image_url": image_url})
+
+        return result
 
 
 class ListingAttributeSerializer(serializers.ModelSerializer):

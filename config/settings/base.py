@@ -12,10 +12,17 @@ https://docs.djangoproject.com/en/4.2/ref/settings/
 
 from pathlib import Path
 from datetime import timedelta
-from decouple import config, Csv
+from decouple import Config, Csv, RepositoryEnv, config
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
+
+_AFRICAS_TALKING_ENV_FILE = BASE_DIR / ".env.africas_talking"
+_africas_talking_config = (
+    Config(RepositoryEnv(str(_AFRICAS_TALKING_ENV_FILE)))
+    if _AFRICAS_TALKING_ENV_FILE.exists()
+    else config
+)
 
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/4.2/howto/deployment/checklist/
@@ -168,6 +175,45 @@ SIMPLE_JWT = {
 
 KEEP_SIGNED_IN_LIFETIME = timedelta(days=365)
 GOOGLE_OAUTH_CLIENT_ID = config("GOOGLE_OAUTH_CLIENT_ID", default="")
+
+AFRICAS_TALKING_USERNAME = _africas_talking_config(
+    "AFRICAS_TALKING_USERNAME",
+    default="",
+)
+AFRICAS_TALKING_API_KEY = _africas_talking_config(
+    "AFRICAS_TALKING_API_KEY",
+    default="",
+)
+AFRICAS_TALKING_SENDER_ID = _africas_talking_config(
+    "AFRICAS_TALKING_SENDER_ID",
+    default="",
+)
+AFRICAS_TALKING_SANDBOX = _africas_talking_config(
+    "AFRICAS_TALKING_SANDBOX",
+    default=False,
+    cast=bool,
+)
+
+PHONE_OTP_EXPIRY_MINUTES = config(
+    "PHONE_OTP_EXPIRY_MINUTES",
+    default=10,
+    cast=int,
+)
+PHONE_OTP_RESEND_SECONDS = config(
+    "PHONE_OTP_RESEND_SECONDS",
+    default=60,
+    cast=int,
+)
+PHONE_OTP_MAX_SENDS_PER_HOUR = config(
+    "PHONE_OTP_MAX_SENDS_PER_HOUR",
+    default=5,
+    cast=int,
+)
+PHONE_OTP_MAX_ATTEMPTS = config(
+    "PHONE_OTP_MAX_ATTEMPTS",
+    default=5,
+    cast=int,
+)
 
 
 REDIS_URL = config("REDIS_URL", default="redis://127.0.0.1:6379/0")

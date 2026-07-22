@@ -38,6 +38,8 @@ class User(AbstractBaseUser, PermissionsMixin):
     is_active = models.BooleanField(default=True)
     is_staff = models.BooleanField(default=False)
     is_verified = models.BooleanField(default=False)
+    phone_verified_at = models.DateTimeField(null=True, blank=True)
+    email_verified_at = models.DateTimeField(null=True, blank=True)
     is_banned = models.BooleanField(default=False)
 
     google_sub = models.CharField(
@@ -68,6 +70,14 @@ class User(AbstractBaseUser, PermissionsMixin):
     def __str__(self):
         return self.phone or self.email or self.full_name
 
+    @property
+    def phone_verified(self):
+        return bool(self.phone and self.phone_verified_at)
+
+    @property
+    def email_verified(self):
+        return bool(self.email and self.email_verified_at)
+
 
 class UserProfile(models.Model):
     user = models.OneToOneField(
@@ -77,6 +87,18 @@ class UserProfile(models.Model):
     )
 
     avatar = models.ImageField(upload_to="users/avatars/", null=True, blank=True)
+    cover_photo = models.ImageField(
+        upload_to="users/covers/",
+        null=True,
+        blank=True,
+    )
+    default_city = models.ForeignKey(
+        "locations.City",
+        on_delete=models.SET_NULL,
+        related_name="default_user_profiles",
+        null=True,
+        blank=True,
+    )
     bio = models.TextField(null=True, blank=True)
     business_name = models.CharField(max_length=150, null=True, blank=True)
     notification_preferences = models.JSONField(
@@ -92,6 +114,40 @@ class UserProfile(models.Model):
 
     def __str__(self):
         return f"Profile: {self.user}"
+
+
+class UserFollow(models.Model):
+    follower = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name="following_relationships",
+    )
+    following = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name="follower_relationships",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["follower", "following"],
+                name="unique_user_follow",
+            ),
+            models.CheckConstraint(
+                check=~models.Q(follower=models.F("following")),
+                name="prevent_self_follow",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["follower", "created_at"]),
+            models.Index(fields=["following", "created_at"]),
+        ]
+
+    def __str__(self):
+        return f"{self.follower} follows {self.following}"
     
 
 class VerificationCode(models.Model):
@@ -129,9 +185,11 @@ class VerificationCode(models.Model):
         default=CHANNEL_EMAIL,
     )
 
-    code = models.CharField(max_length=10)
+    code = models.CharField(max_length=128, editable=False)
 
     is_used = models.BooleanField(default=False)
+
+    failed_attempts = models.PositiveSmallIntegerField(default=0)
 
     expires_at = models.DateTimeField()
 
@@ -141,7 +199,6 @@ class VerificationCode(models.Model):
         ordering = ["-created_at"]
         indexes = [
             models.Index(fields=["user", "purpose", "is_used"]),
-            models.Index(fields=["code"]),
             models.Index(fields=["expires_at"]),
         ]
 

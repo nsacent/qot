@@ -9,7 +9,11 @@ from rest_framework import generics, permissions, status
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from .models import Listing, ListingImage, PendingListingImage
+from .models import Listing, ListingDraft, ListingImage, PendingListingImage
+from .image_fingerprints import (
+    validate_image_for_user,
+    validate_staged_image_for_user,
+)
 from .permissions import IsListingOwnerOrReadOnly
 
 from decimal import Decimal, InvalidOperation
@@ -19,6 +23,7 @@ from .serializers import (
     ListingDetailSerializer,
     ListingCreateUpdateSerializer,
     ListingImageSerializer,
+    ListingDraftSerializer,
 
 )
 
@@ -144,11 +149,19 @@ class ListingListCreateAPIView(generics.ListCreateAPIView):
             )
 
         validated_images = []
+        seen_image_hashes = set()
 
         for image in images:
             image_serializer = ListingImageSerializer(data={"image": image})
             image_serializer.is_valid(raise_exception=True)
-            validated_images.append(image_serializer.validated_data["image"])
+            validated_image = image_serializer.validated_data["image"]
+            content_hash = validate_image_for_user(
+                user=request.user,
+                image_file=validated_image,
+                seen_hashes=seen_image_hashes,
+                error_field="images",
+            )
+            validated_images.append((validated_image, content_hash))
 
         serializer = self.get_serializer(data=payload)
         serializer.is_valid(raise_exception=True)
@@ -169,17 +182,31 @@ class ListingListCreateAPIView(generics.ListCreateAPIView):
                     status=status.HTTP_400_BAD_REQUEST,
                 )
 
+            staged_image_hashes = {}
+
+            for image_id in staged_image_ids:
+                staged_image_hashes[image_id] = validate_staged_image_for_user(
+                    user=request.user,
+                    image_record=staged_by_id[image_id],
+                    seen_hashes=seen_image_hashes,
+                    error_field="images",
+                )
+
             listing = serializer.save()
 
             ordered_images = [
-                staged_by_id[image_id].image.name
+                (
+                    staged_by_id[image_id].image.name,
+                    staged_image_hashes[image_id],
+                )
                 for image_id in staged_image_ids
             ] + validated_images
 
-            for index, image in enumerate(ordered_images):
+            for index, (image, content_hash) in enumerate(ordered_images):
                 ListingImage.objects.create(
                     listing=listing,
                     image=image,
+                    content_hash=content_hash,
                     is_primary=index == 0,
                     sort_order=index,
                 )
@@ -323,6 +350,7 @@ class PendingListingImageAPIView(APIView):
     def post(self, request):
         expired_images = PendingListingImage.objects.filter(
             user=request.user,
+            reserved_for_draft=False,
             created_at__lt=timezone.now() - timedelta(hours=24),
         )
 
@@ -332,6 +360,12 @@ class PendingListingImageAPIView(APIView):
 
         image_serializer = ListingImageSerializer(data=request.data)
         image_serializer.is_valid(raise_exception=True)
+        validated_image = image_serializer.validated_data["image"]
+        content_hash = validate_image_for_user(
+            user=request.user,
+            image_file=validated_image,
+            check_pending=True,
+        )
 
         pending_count = PendingListingImage.objects.filter(user=request.user).count()
 
@@ -343,7 +377,8 @@ class PendingListingImageAPIView(APIView):
 
         pending_image = PendingListingImage.objects.create(
             user=request.user,
-            image=image_serializer.validated_data["image"],
+            image=validated_image,
+            content_hash=content_hash,
         )
 
         return Response(
@@ -366,8 +401,134 @@ class PendingListingImageAPIView(APIView):
                 status=status.HTTP_404_NOT_FOUND,
             )
 
+        draft = ListingDraft.objects.filter(user=request.user).first()
+        if draft and pk in draft.staged_image_ids:
+            draft.staged_image_ids = [
+                image_id for image_id in draft.staged_image_ids if image_id != pk
+            ]
+            draft.save(update_fields=["staged_image_ids", "updated_at"])
+
         pending_image.image.delete(save=False)
         pending_image.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class ListingDraftAPIView(APIView):
+    permission_classes = [
+        permissions.IsAuthenticated,
+        IsNotBanned,
+        IsVerifiedUser,
+    ]
+
+    allowed_data_fields = {
+        "title",
+        "description",
+        "price",
+        "category",
+        "city",
+        "condition",
+        "is_negotiable",
+        "category_filter_values",
+    }
+
+    def get(self, request):
+        draft = ListingDraft.objects.filter(user=request.user).first()
+
+        if not draft:
+            return Response({"draft": None}, status=status.HTTP_200_OK)
+
+        serializer = ListingDraftSerializer(
+            draft,
+            context={"request": request},
+        )
+        return Response({"draft": serializer.data}, status=status.HTTP_200_OK)
+
+    @transaction.atomic
+    def put(self, request):
+        raw_data = request.data.get("data", {})
+        staged_image_ids = request.data.get("staged_image_ids", [])
+
+        if not isinstance(raw_data, dict):
+            return Response(
+                {"data": ["Draft data must be an object."]},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        unknown_fields = set(raw_data) - self.allowed_data_fields
+        if unknown_fields:
+            return Response(
+                {"data": [f"Unknown draft field: {sorted(unknown_fields)[0]}."]},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if not isinstance(staged_image_ids, list):
+            return Response(
+                {"staged_image_ids": ["Staged image IDs must be a list."]},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            staged_image_ids = [int(image_id) for image_id in staged_image_ids]
+        except (TypeError, ValueError):
+            return Response(
+                {"staged_image_ids": ["Every staged image ID must be an integer."]},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if len(staged_image_ids) != len(set(staged_image_ids)):
+            return Response(
+                {"staged_image_ids": ["Staged image IDs cannot be duplicated."]},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        owned_image_ids = set(
+            PendingListingImage.objects.filter(
+                user=request.user,
+                id__in=staged_image_ids,
+            ).values_list("id", flat=True)
+        )
+        if owned_image_ids != set(staged_image_ids):
+            return Response(
+                {"staged_image_ids": ["One or more staged photos are invalid."]},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        draft, _ = ListingDraft.objects.select_for_update().get_or_create(
+            user=request.user,
+        )
+        old_image_ids = set(draft.staged_image_ids)
+        new_image_ids = set(staged_image_ids)
+
+        PendingListingImage.objects.filter(
+            user=request.user,
+            id__in=old_image_ids - new_image_ids,
+        ).update(reserved_for_draft=False)
+        PendingListingImage.objects.filter(
+            user=request.user,
+            id__in=new_image_ids,
+        ).update(reserved_for_draft=True)
+
+        draft.data = raw_data
+        draft.staged_image_ids = staged_image_ids
+        draft.save()
+
+        serializer = ListingDraftSerializer(
+            draft,
+            context={"request": request},
+        )
+        return Response({"draft": serializer.data}, status=status.HTTP_200_OK)
+
+    @transaction.atomic
+    def delete(self, request):
+        draft = ListingDraft.objects.select_for_update().filter(user=request.user).first()
+
+        if draft:
+            PendingListingImage.objects.filter(
+                user=request.user,
+                id__in=draft.staged_image_ids,
+            ).update(reserved_for_draft=False)
+            draft.delete()
+
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
@@ -732,11 +893,18 @@ class ListingImageUploadAPIView(APIView):
             context={"request": request},
         )
         serializer.is_valid(raise_exception=True)
+        validated_image = serializer.validated_data["image"]
+        content_hash = validate_image_for_user(
+            user=request.user,
+            image_file=validated_image,
+            exclude_listing_id=listing.id,
+        )
 
         is_first_image = current_images_count == 0
 
         image = serializer.save(
             listing=listing,
+            content_hash=content_hash,
             is_primary=is_first_image,
         )
 

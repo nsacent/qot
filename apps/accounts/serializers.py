@@ -1,5 +1,3 @@
-import re
-
 from django.conf import settings
 from django.contrib.auth import authenticate
 from django.contrib.auth.tokens import default_token_generator
@@ -12,16 +10,32 @@ from rest_framework_simplejwt.tokens import RefreshToken
 from google.auth.transport import requests as google_requests
 from google.oauth2 import id_token as google_id_token
 
-from .models import User, UserProfile
+from apps.locations.models import City
+
+from .models import User, UserFollow, UserProfile, VerificationCode
+from .phone_numbers import normalize_ugandan_phone
 
 
 class UserProfileSerializer(serializers.ModelSerializer):
+    default_city_name = serializers.CharField(
+        source="default_city.name",
+        read_only=True,
+    )
+    default_region_name = serializers.CharField(
+        source="default_city.region.name",
+        read_only=True,
+    )
+
     class Meta:
         model = UserProfile
         fields = [
             "avatar",
+            "cover_photo",
             "bio",
             "business_name",
+            "default_city",
+            "default_city_name",
+            "default_region_name",
             "notification_preferences",
             "trust_score",
             "total_listings",
@@ -65,6 +79,10 @@ class UserProfileSerializer(serializers.ModelSerializer):
 
 class UserSerializer(serializers.ModelSerializer):
     profile = UserProfileSerializer(read_only=True)
+    followers_count = serializers.SerializerMethodField()
+    following_count = serializers.SerializerMethodField()
+    phone_verified = serializers.BooleanField(read_only=True)
+    email_verified = serializers.BooleanField(read_only=True)
 
     class Meta:
         model = User
@@ -75,17 +93,35 @@ class UserSerializer(serializers.ModelSerializer):
             "full_name",
             "role",
             "is_verified",
+            "phone_verified",
+            "phone_verified_at",
+            "email_verified",
+            "email_verified_at",
             "is_banned",
             "date_joined",
             "profile",
+            "followers_count",
+            "following_count",
         ]
         read_only_fields = [
             "id",
             "role",
             "is_verified",
+            "phone_verified",
+            "phone_verified_at",
+            "email_verified",
+            "email_verified_at",
             "is_banned",
             "date_joined",
+            "followers_count",
+            "following_count",
         ]
+
+    def get_followers_count(self, obj):
+        return obj.follower_relationships.count()
+
+    def get_following_count(self, obj):
+        return obj.following_relationships.count()
 
 
 class RegisterSerializer(serializers.ModelSerializer):
@@ -124,24 +160,12 @@ class RegisterSerializer(serializers.ModelSerializer):
         return attrs
 
     def validate_phone(self, value):
-        if not value:
-            return value
-
-        digits = re.sub(r"\D", "", value)
-
-        if digits.startswith("256"):
-            national_number = digits[3:]
-        elif digits.startswith("0"):
-            national_number = digits[1:]
-        else:
-            national_number = digits
-
-        if not re.fullmatch(r"7\d{8}", national_number):
+        try:
+            normalized_phone = normalize_ugandan_phone(value)
+        except ValueError as error:
             raise serializers.ValidationError(
-                "Enter a valid Ugandan mobile number, such as +256700000001."
-            )
-
-        normalized_phone = f"+256{national_number}"
+                str(error)
+            ) from error
 
         if User.objects.filter(phone=normalized_phone).exists():
             raise serializers.ValidationError(
@@ -173,13 +197,19 @@ class LoginSerializer(serializers.Serializer):
     )
 
     def validate(self, attrs):
-        identifier = attrs.get("identifier")
+        identifier = str(attrs.get("identifier") or "").strip()
         password = attrs.get("password")
 
         user = None
 
         if identifier:
-            user = User.objects.filter(phone=identifier).first()
+            if "@" not in identifier:
+                try:
+                    phone = normalize_ugandan_phone(identifier)
+                except ValueError:
+                    phone = identifier
+
+                user = User.objects.filter(phone=phone).first()
 
             if user is None:
                 user = User.objects.filter(email__iexact=identifier).first()
@@ -266,6 +296,27 @@ class QOTTokenRefreshSerializer(TokenRefreshSerializer):
 
 class ProfileUpdateSerializer(serializers.ModelSerializer):
     profile = UserProfileSerializer(required=False)
+    avatar = serializers.ImageField(write_only=True, required=False, allow_null=True)
+    cover_photo = serializers.ImageField(write_only=True, required=False, allow_null=True)
+    bio = serializers.CharField(
+        write_only=True,
+        required=False,
+        allow_blank=True,
+        allow_null=True,
+    )
+    business_name = serializers.CharField(
+        write_only=True,
+        required=False,
+        allow_blank=True,
+        allow_null=True,
+        max_length=150,
+    )
+    default_city = serializers.PrimaryKeyRelatedField(
+        queryset=City.objects.filter(is_active=True),
+        write_only=True,
+        required=False,
+        allow_null=True,
+    )
 
     class Meta:
         model = User
@@ -274,20 +325,87 @@ class ProfileUpdateSerializer(serializers.ModelSerializer):
             "email",
             "full_name",
             "profile",
+            "avatar",
+            "cover_photo",
+            "bio",
+            "business_name",
+            "default_city",
         ]
+        read_only_fields = ["email"]
+
+    def validate_avatar(self, value):
+        return self._validate_profile_image(value)
+
+    def validate_cover_photo(self, value):
+        return self._validate_profile_image(value)
+
+    def validate_phone(self, value):
+        if not value:
+            return value
+
+        try:
+            normalized_phone = normalize_ugandan_phone(value)
+        except ValueError as error:
+            raise serializers.ValidationError(str(error)) from error
+
+        duplicate = User.objects.filter(phone=normalized_phone)
+
+        if self.instance:
+            duplicate = duplicate.exclude(pk=self.instance.pk)
+
+        if duplicate.exists():
+            raise serializers.ValidationError(
+                "An account with this phone number already exists."
+            )
+
+        return normalized_phone
+
+    def _validate_profile_image(self, value):
+        if value is None:
+            return value
+
+        if value.size > 5 * 1024 * 1024:
+            raise serializers.ValidationError("Image must be 5MB or smaller.")
+
+        content_type = getattr(value, "content_type", "")
+        if content_type and content_type not in {"image/jpeg", "image/png", "image/webp"}:
+            raise serializers.ValidationError("Use a JPG, PNG, or WEBP image.")
+
+        return value
 
     def update(self, instance, validated_data):
         profile_data = validated_data.pop("profile", None)
+        flat_profile_data = {
+            field: validated_data.pop(field)
+            for field in [
+                "avatar",
+                "cover_photo",
+                "bio",
+                "business_name",
+                "default_city",
+            ]
+            if field in validated_data
+        }
 
+        previous_phone = instance.phone
         instance.phone = validated_data.get("phone", instance.phone)
-        instance.email = validated_data.get("email", instance.email)
         instance.full_name = validated_data.get("full_name", instance.full_name)
+
+        if instance.phone != previous_phone:
+            instance.phone_verified_at = None
+
+            if not instance.email_verified:
+                instance.is_verified = False
+
         instance.save()
 
-        if profile_data:
+        if profile_data is not None or flat_profile_data:
             profile, _ = UserProfile.objects.get_or_create(user=instance)
 
-            for field, value in profile_data.items():
+            for field, value in {
+                **(profile_data or {}),
+                **flat_profile_data,
+            }.items():
                 setattr(profile, field, value)
 
             profile.save()
@@ -347,11 +465,26 @@ class PasswordResetConfirmSerializer(serializers.Serializer):
     
 class SendVerificationCodeSerializer(serializers.Serializer):
     channel = serializers.ChoiceField(
-        choices=["email"],
-        default="email",
+        choices=[
+            VerificationCode.CHANNEL_PHONE,
+            VerificationCode.CHANNEL_EMAIL,
+        ],
+        default=VerificationCode.CHANNEL_PHONE,
     )
 
 
 class ConfirmVerificationCodeSerializer(serializers.Serializer):
-    code = serializers.CharField(max_length=10)
+    channel = serializers.ChoiceField(
+        choices=[
+            VerificationCode.CHANNEL_PHONE,
+            VerificationCode.CHANNEL_EMAIL,
+        ],
+        default=VerificationCode.CHANNEL_PHONE,
+    )
+    code = serializers.RegexField(
+        regex=r"^\d{6}$",
+        error_messages={
+            "invalid": "Enter the 6-digit verification code.",
+        },
+    )
     

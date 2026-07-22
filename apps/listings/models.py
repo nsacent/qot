@@ -121,6 +121,7 @@ class ListingImage(models.Model):
     )
 
     image = models.ImageField(upload_to="listings/images/")
+    content_hash = models.CharField(max_length=64, blank=True, default="", db_index=True)
     is_primary = models.BooleanField(default=False)
 
     sort_order = models.PositiveIntegerField(default=0)
@@ -144,10 +145,27 @@ class PendingListingImage(models.Model):
         related_name="pending_listing_images",
     )
     image = models.ImageField(upload_to="listings/images/")
+    content_hash = models.CharField(max_length=64, blank=True, default="", db_index=True)
+    reserved_for_draft = models.BooleanField(default=False, db_index=True)
     created_at = models.DateTimeField(auto_now_add=True, db_index=True)
 
     def __str__(self):
         return f"Pending listing image for {self.user_id}"
+
+
+class ListingDraft(models.Model):
+    user = models.OneToOneField(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="listing_draft",
+    )
+    data = models.JSONField(default=dict, blank=True)
+    staged_image_ids = models.JSONField(default=list, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f"Listing draft for {self.user_id}"
 
 
 class ListingAttribute(models.Model):
