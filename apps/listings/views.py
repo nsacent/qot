@@ -1068,3 +1068,72 @@ class SetPrimaryListingImageAPIView(APIView):
             },
             status=status.HTTP_200_OK,
         )
+
+
+class ReorderListingImagesAPIView(APIView):
+    permission_classes = [
+        permissions.IsAuthenticated,
+        IsNotBanned,
+        IsVerifiedUser,
+    ]
+
+    def post(self, request, pk):
+        try:
+            listing = Listing.objects.get(pk=pk, seller=request.user)
+        except Listing.DoesNotExist:
+            return Response(
+                {"detail": "Listing not found."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        image_ids = request.data.get("image_ids")
+
+        if not isinstance(image_ids, list) or not image_ids:
+            return Response(
+                {"detail": "Provide the complete photo order."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            normalized_ids = [int(image_id) for image_id in image_ids]
+        except (TypeError, ValueError):
+            return Response(
+                {"detail": "Photo order contains an invalid image."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        current_ids = list(listing.images.values_list("id", flat=True))
+
+        if (
+            len(normalized_ids) != len(set(normalized_ids))
+            or set(normalized_ids) != set(current_ids)
+        ):
+            return Response(
+                {"detail": "Photo order must include every ad photo exactly once."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        images_by_id = {
+            image.id: image
+            for image in listing.images.filter(id__in=normalized_ids)
+        }
+
+        with transaction.atomic():
+            for sort_order, image_id in enumerate(normalized_ids):
+                image = images_by_id[image_id]
+                image.sort_order = sort_order
+                image.is_primary = sort_order == 0
+
+            ListingImage.objects.bulk_update(
+                images_by_id.values(),
+                ["sort_order", "is_primary"],
+            )
+
+        return Response(
+            {
+                "message": "Photo order updated successfully.",
+                "image_ids": normalized_ids,
+                "primary_image_id": normalized_ids[0],
+            },
+            status=status.HTTP_200_OK,
+        )

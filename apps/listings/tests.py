@@ -352,6 +352,61 @@ class ListingLifecycleTests(APITestCase):
         existing_image.refresh_from_db()
         self.assertTrue(existing_image.is_primary)
 
+    def test_owner_can_reorder_listing_images_and_choose_first_as_primary(self):
+        listing = self.create_listing()
+        first_image = ListingImage.objects.create(
+            listing=listing,
+            image=self.make_image("first.png"),
+            is_primary=True,
+            sort_order=0,
+        )
+        second_image = ListingImage.objects.create(
+            listing=listing,
+            image=self.make_image("second.png", color=(37, 99, 235)),
+            is_primary=False,
+            sort_order=1,
+        )
+        self.authenticate_owner()
+
+        response = self.client.post(
+            f"/api/v1/listings/{listing.id}/images/reorder/",
+            {"image_ids": [second_image.id, first_image.id]},
+            format="json",
+        )
+
+        first_image.refresh_from_db()
+        second_image.refresh_from_db()
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["primary_image_id"], second_image.id)
+        self.assertTrue(second_image.is_primary)
+        self.assertEqual(second_image.sort_order, 0)
+        self.assertFalse(first_image.is_primary)
+        self.assertEqual(first_image.sort_order, 1)
+
+    def test_reorder_requires_every_listing_image_exactly_once(self):
+        listing = self.create_listing()
+        first_image = ListingImage.objects.create(
+            listing=listing,
+            image=self.make_image("first.png"),
+            is_primary=True,
+            sort_order=0,
+        )
+        ListingImage.objects.create(
+            listing=listing,
+            image=self.make_image("second.png", color=(37, 99, 235)),
+            is_primary=False,
+            sort_order=1,
+        )
+        self.authenticate_owner()
+
+        response = self.client.post(
+            f"/api/v1/listings/{listing.id}/images/reorder/",
+            {"image_ids": [first_image.id]},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
     def test_cleanup_pending_images_removes_database_row_and_file(self):
         pending_image = PendingListingImage.objects.create(
             user=self.owner,

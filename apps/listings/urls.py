@@ -6,6 +6,7 @@ from .views import (
     ListingImageUploadAPIView,
     ListingImageDeleteAPIView,
     SetPrimaryListingImageAPIView,
+    ReorderListingImagesAPIView,
     MarkListingSoldAPIView,
     MarkListingAvailableAPIView,
     MarkListingUnavailableAPIView,
@@ -41,6 +42,11 @@ urlpatterns = [
         "<int:pk>/images/<int:image_id>/set-primary/",
         SetPrimaryListingImageAPIView.as_view(),
         name="listing_image_set_primary",
+    ),
+    path(
+        "<int:pk>/images/reorder/",
+        ReorderListingImagesAPIView.as_view(),
+        name="listing_images_reorder",
     ),
 
     path("<int:pk>/mark-available/", MarkListingAvailableAPIView.as_view(), name="mark_available"),
