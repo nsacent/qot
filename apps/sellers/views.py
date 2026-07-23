@@ -1,4 +1,6 @@
 from django.shortcuts import get_object_or_404
+from django.db.models import Avg, Count, IntegerField, OuterRef, Q, Subquery, Sum, Value
+from django.db.models.functions import Coalesce
 from rest_framework import generics, permissions, status
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -11,6 +13,80 @@ from .serializers import (
     PublicSellerListingSerializer,
     SellerFollowUserSerializer,
 )
+
+
+class PublicSellerListAPIView(generics.ListAPIView):
+    serializer_class = PublicSellerSerializer
+    permission_classes = [permissions.AllowAny]
+    search_fields = [
+        "full_name",
+        "profile__business_name",
+        "profile__bio",
+        "profile__default_city__name",
+        "profile__default_city__region__name",
+    ]
+
+    def get_queryset(self):
+        active_listing_filter = Q(listings__status=Listing.STATUS_ACTIVE)
+        visible_review_filter = Q(received_reviews__is_visible=True)
+        active_view_totals = (
+            Listing.objects
+            .filter(
+                seller_id=OuterRef("pk"),
+                status=Listing.STATUS_ACTIVE,
+            )
+            .values("seller_id")
+            .annotate(total_views=Sum("views_count"))
+            .values("total_views")[:1]
+        )
+
+        return (
+            User.objects
+            .filter(
+                is_active=True,
+                is_banned=False,
+                is_verified=True,
+                listings__status=Listing.STATUS_ACTIVE,
+            )
+            .select_related(
+                "profile",
+                "profile__default_city",
+                "profile__default_city__region",
+            )
+            .annotate(
+                total_active_listings_value=Count(
+                    "listings",
+                    filter=active_listing_filter,
+                    distinct=True,
+                ),
+                average_rating_value=Avg(
+                    "received_reviews__rating",
+                    filter=visible_review_filter,
+                ),
+                total_reviews_value=Count(
+                    "received_reviews",
+                    filter=visible_review_filter,
+                    distinct=True,
+                ),
+                followers_count_value=Count(
+                    "follower_relationships",
+                    distinct=True,
+                ),
+                following_count_value=Count(
+                    "following_relationships",
+                    distinct=True,
+                ),
+                total_ad_views_value=Coalesce(
+                    Subquery(
+                        active_view_totals,
+                        output_field=IntegerField(),
+                    ),
+                    Value(0),
+                ),
+            )
+            .filter(average_rating_value__gte=3.5)
+            .order_by("-total_ad_views_value", "-date_joined")
+        )
 
 
 class PublicSellerDetailAPIView(generics.RetrieveAPIView):

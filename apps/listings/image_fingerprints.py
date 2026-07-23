@@ -6,7 +6,7 @@ from .models import Listing, ListingImage, PendingListingImage
 
 
 DUPLICATE_AD_IMAGE_MESSAGE = (
-    "This photo is already used in another one of your ads. "
+    "This photo is already used in one of your ads, including this one. "
     "Choose a different photo."
 )
 DUPLICATE_SELECTION_MESSAGE = "You selected the same photo more than once."

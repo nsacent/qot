@@ -29,6 +29,7 @@ class PublicSellerSerializer(serializers.ModelSerializer):
             "id",
             "full_name",
             "phone",
+            "is_verified",
             "avatar",
             "cover_photo",
             "bio",
@@ -72,9 +73,17 @@ class PublicSellerSerializer(serializers.ModelSerializer):
         return profile.cover_photo.url
 
     def get_total_active_listings(self, obj):
+        annotated_value = getattr(obj, "total_active_listings_value", None)
+        if annotated_value is not None:
+            return annotated_value
+
         return obj.listings.filter(status=Listing.STATUS_ACTIVE).count()
 
     def get_average_rating(self, obj):
+        annotated_value = getattr(obj, "average_rating_value", None)
+        if annotated_value is not None:
+            return round(annotated_value or 0, 1)
+
         average = obj.received_reviews.filter(
             is_visible=True,
         ).aggregate(
@@ -84,14 +93,26 @@ class PublicSellerSerializer(serializers.ModelSerializer):
         return round(average or 0, 1)
 
     def get_total_reviews(self, obj):
+        annotated_value = getattr(obj, "total_reviews_value", None)
+        if annotated_value is not None:
+            return annotated_value
+
         return obj.received_reviews.filter(
             is_visible=True,
         ).count()
 
     def get_followers_count(self, obj):
+        annotated_value = getattr(obj, "followers_count_value", None)
+        if annotated_value is not None:
+            return annotated_value
+
         return obj.follower_relationships.count()
 
     def get_following_count(self, obj):
+        annotated_value = getattr(obj, "following_count_value", None)
+        if annotated_value is not None:
+            return annotated_value
+
         return obj.following_relationships.count()
 
     def get_is_following(self, obj):

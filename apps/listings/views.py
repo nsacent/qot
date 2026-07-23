@@ -447,18 +447,17 @@ class PendingListingImageAPIView(APIView):
             user=request.user,
         ).first()
 
-        if not pending_image:
-            return Response(
-                {"detail": "Staged photo not found."},
-                status=status.HTTP_404_NOT_FOUND,
-            )
-
         draft = ListingDraft.objects.filter(user=request.user).first()
-        if draft and pk in draft.staged_image_ids:
+        if draft:
             draft.staged_image_ids = [
-                image_id for image_id in draft.staged_image_ids if image_id != pk
+                image_id
+                for image_id in draft.staged_image_ids
+                if str(image_id) != str(pk)
             ]
             draft.save(update_fields=["staged_image_ids", "updated_at"])
+
+        if not pending_image:
+            return Response(status=status.HTTP_204_NO_CONTENT)
 
         pending_image.image.delete(save=False)
         pending_image.delete()
@@ -949,7 +948,6 @@ class ListingImageUploadAPIView(APIView):
         content_hash = validate_image_for_user(
             user=request.user,
             image_file=validated_image,
-            exclude_listing_id=listing.id,
         )
 
         is_first_image = current_images_count == 0

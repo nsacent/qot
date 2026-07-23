@@ -44,6 +44,27 @@ def get_other_chat_participant(thread, user):
     return None
 
 
+def deliver_chat_message(thread, message, preview=None):
+    thread.last_message = preview or message.body or "[Attachment]"
+    thread.last_message_at = message.created_at
+
+    if message.sender_id == thread.buyer_id:
+        thread.seller_unread_count += 1
+    else:
+        thread.buyer_unread_count += 1
+
+    thread.save(
+        update_fields=[
+            "last_message",
+            "last_message_at",
+            "buyer_unread_count",
+            "seller_unread_count",
+        ]
+    )
+
+    create_message_notification(thread, message)
+
+
 class ChatThreadListCreateAPIView(generics.ListCreateAPIView):
     def get_permissions(self):
         if self.request.method == "POST":
@@ -111,6 +132,18 @@ class ChatThreadListCreateAPIView(generics.ListCreateAPIView):
             },
         )
 
+        initial_message = serializer.validated_data.get("initial_message", "")
+        created_message = None
+
+        if created and initial_message:
+            created_message = ChatMessage.objects.create(
+                thread=thread,
+                sender=request.user,
+                body=initial_message,
+                message_type=ChatMessage.TYPE_TEXT,
+            )
+            deliver_chat_message(thread, created_message)
+
         return Response(
             {
                 "message": "Chat thread created." if created else "Chat thread already exists.",
@@ -118,6 +151,14 @@ class ChatThreadListCreateAPIView(generics.ListCreateAPIView):
                     thread,
                     context={"request": request},
                 ).data,
+                "initial_message": (
+                    ChatMessageSerializer(
+                        created_message,
+                        context={"request": request},
+                    ).data
+                    if created_message
+                    else None
+                ),
             },
             status=status.HTTP_201_CREATED if created else status.HTTP_200_OK,
         )
@@ -237,24 +278,11 @@ class ChatMessageListCreateAPIView(generics.ListCreateAPIView):
             sender=request.user,
         )
 
-        thread.last_message = message.body if message.body else "[Image]"
-        thread.last_message_at = message.created_at
-
-        if request.user == thread.buyer:
-            thread.seller_unread_count += 1
-        else:
-            thread.buyer_unread_count += 1
-
-        thread.save(
-            update_fields=[
-                "last_message",
-                "last_message_at",
-                "buyer_unread_count",
-                "seller_unread_count",
-            ]
+        deliver_chat_message(
+            thread,
+            message,
+            preview=message.body or "[Image]",
         )
-
-        create_message_notification(thread, message)
 
         return Response(
             ChatMessageSerializer(message, context={"request": request}).data,
@@ -313,16 +341,30 @@ class ChatMarkReadAPIView(APIView):
         )
     
 class ChatAttachmentUploadAPIView(APIView):
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [
+        permissions.IsAuthenticated,
+        IsNotBanned,
+        IsVerifiedUser,
+    ]
     parser_classes = [MultiPartParser, FormParser]
 
     def get_file_type(self, file_name):
         file_name = file_name.lower()
 
-        if file_name.endswith((".jpg", ".jpeg", ".png", ".webp")):
+        if file_name.endswith((".jpg", ".jpeg", ".png", ".webp", ".gif")):
             return ChatMessageAttachment.FILE_TYPE_IMAGE
 
-        if file_name.endswith((".pdf", ".doc", ".docx")):
+        if file_name.endswith((
+            ".pdf",
+            ".doc",
+            ".docx",
+            ".xls",
+            ".xlsx",
+            ".ppt",
+            ".pptx",
+            ".txt",
+            ".csv",
+        )):
             return ChatMessageAttachment.FILE_TYPE_DOCUMENT
 
         return ChatMessageAttachment.FILE_TYPE_OTHER
@@ -361,18 +403,42 @@ class ChatAttachmentUploadAPIView(APIView):
                 status=status.HTTP_403_FORBIDDEN,
             )
 
-        serializer = ChatAttachmentUploadSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
+        uploaded_files = request.FILES.getlist("files") or request.FILES.getlist("file")
 
-        uploaded_file = serializer.validated_data["file"]
-        message_text = serializer.validated_data.get("message", "")
+        if not uploaded_files:
+            return Response(
+                {"file": ["Choose at least one file to attach."]},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
-        file_type = self.get_file_type(uploaded_file.name)
+        if len(uploaded_files) > 5:
+            return Response(
+                {"files": ["You can attach up to 5 files at a time."]},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
-        message_type = ChatMessage.TYPE_TEXT
+        message_text = str(request.data.get("message", "")).strip()
+        validated_files = []
 
-        if file_type == ChatMessageAttachment.FILE_TYPE_IMAGE:
-            message_type = ChatMessage.TYPE_IMAGE
+        for uploaded_file in uploaded_files:
+            serializer = ChatAttachmentUploadSerializer(
+                data={
+                    "message": message_text,
+                    "file": uploaded_file,
+                }
+            )
+            serializer.is_valid(raise_exception=True)
+            validated_files.append(serializer.validated_data["file"])
+
+        file_types = [self.get_file_type(file.name) for file in validated_files]
+        message_type = (
+            ChatMessage.TYPE_IMAGE
+            if all(
+                file_type == ChatMessageAttachment.FILE_TYPE_IMAGE
+                for file_type in file_types
+            )
+            else ChatMessage.TYPE_TEXT
+        )
 
         chat_message = ChatMessage.objects.create(
             thread=thread,
@@ -381,16 +447,25 @@ class ChatAttachmentUploadAPIView(APIView):
             message_type=message_type,
 )
 
-        ChatMessageAttachment.objects.create(
-            message=chat_message,
-            file=uploaded_file,
-            file_type=file_type,
-            original_name=uploaded_file.name,
-            size=uploaded_file.size,
-        )
+        for uploaded_file, file_type in zip(validated_files, file_types):
+            ChatMessageAttachment.objects.create(
+                message=chat_message,
+                file=uploaded_file,
+                file_type=file_type,
+                original_name=uploaded_file.name,
+                size=uploaded_file.size,
+            )
 
-        thread.last_message_at = timezone.now()
-        thread.save(update_fields=["last_message_at"])
+        attachment_label = (
+            validated_files[0].name
+            if len(validated_files) == 1
+            else f"{len(validated_files)} attachments"
+        )
+        deliver_chat_message(
+            thread,
+            chat_message,
+            preview=message_text or f"[Attachment] {attachment_label}",
+        )
 
         return Response(
             {

@@ -168,6 +168,12 @@ class ChatThreadSerializer(serializers.ModelSerializer):
 
 class ChatThreadCreateSerializer(serializers.Serializer):
     listing_id = serializers.IntegerField()
+    initial_message = serializers.CharField(
+        required=False,
+        allow_blank=False,
+        max_length=1000,
+        trim_whitespace=True,
+    )
 
     def validate_listing_id(self, value):
         try:
@@ -240,16 +246,23 @@ class ChatAttachmentUploadSerializer(serializers.Serializer):
             ".jpeg",
             ".png",
             ".webp",
+            ".gif",
             ".pdf",
             ".doc",
             ".docx",
+            ".xls",
+            ".xlsx",
+            ".ppt",
+            ".pptx",
+            ".txt",
+            ".csv",
         ]
 
         file_name = file.name.lower()
 
         if not any(file_name.endswith(ext) for ext in allowed_extensions):
             raise serializers.ValidationError(
-                "Only JPG, PNG, WEBP, PDF, DOC, and DOCX files are allowed."
+                "This file type is not supported. Attach an image, PDF, Office document, TXT, or CSV file."
             )
 
         return file

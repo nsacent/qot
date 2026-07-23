@@ -356,6 +356,30 @@ class ListingLifecycleTests(APITestCase):
         self.assertFalse(pending_image.reserved_for_draft)
         self.assertFalse(ListingDraft.objects.filter(user=self.owner).exists())
 
+    def test_staged_draft_photo_delete_is_idempotent_and_updates_draft(self):
+        self.authenticate_owner()
+        pending_image = PendingListingImage.objects.create(
+            user=self.owner,
+            image=SimpleUploadedFile("draft-delete.jpg", b"draft-image-content"),
+        )
+        self.client.put(
+            "/api/v1/listings/draft/",
+            {"data": {"title": "Draft"}, "staged_image_ids": [pending_image.id]},
+            format="json",
+        )
+
+        delete_url = f"/api/v1/listings/images/stage/{pending_image.id}/"
+        first_response = self.client.delete(delete_url)
+        second_response = self.client.delete(delete_url)
+
+        self.assertEqual(first_response.status_code, status.HTTP_204_NO_CONTENT)
+        self.assertEqual(second_response.status_code, status.HTTP_204_NO_CONTENT)
+        self.assertFalse(PendingListingImage.objects.filter(pk=pending_image.id).exists())
+        self.assertEqual(
+            ListingDraft.objects.get(user=self.owner).staged_image_ids,
+            [],
+        )
+
     def test_staged_photo_rejects_image_used_by_another_ad(self):
         existing_listing = self.create_listing()
         ListingImage.objects.create(
@@ -371,7 +395,7 @@ class ListingLifecycleTests(APITestCase):
         )
 
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
-        self.assertIn("already used in another", str(response.data))
+        self.assertIn("already used in one of your ads", str(response.data))
         self.assertEqual(PendingListingImage.objects.filter(user=self.owner).count(), 0)
 
     def test_duplicate_image_check_is_scoped_to_the_current_user(self):
@@ -452,8 +476,53 @@ class ListingLifecycleTests(APITestCase):
         )
 
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
-        self.assertIn("already used in another", str(response.data))
+        self.assertIn("already used in one of your ads", str(response.data))
         self.assertEqual(target_listing.images.count(), 0)
+
+    def test_existing_ad_upload_rejects_photo_already_on_the_same_ad(self):
+        listing = self.create_listing()
+        ListingImage.objects.create(
+            listing=listing,
+            image=self.make_image("existing-on-ad.png", color=(37, 99, 235)),
+        )
+        self.authenticate_owner()
+
+        response = self.client.post(
+            f"/api/v1/listings/{listing.id}/images/",
+            {"image": self.make_image("same-photo.png", color=(37, 99, 235))},
+            format="multipart",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("including this one", str(response.data))
+        self.assertEqual(listing.images.count(), 1)
+
+    def test_existing_ad_upload_adds_watermark_and_keeps_original_fingerprint(self):
+        listing = self.create_listing()
+        source_color = (124, 58, 237)
+        upload = self.make_image(
+            "edit-upload.png",
+            color=source_color,
+            size=(180, 120),
+        )
+        expected_hash = calculate_content_hash(upload)
+        self.authenticate_owner()
+
+        response = self.client.post(
+            f"/api/v1/listings/{listing.id}/images/",
+            {"image": upload},
+            format="multipart",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        uploaded_image = listing.images.get()
+        self.assertTrue(uploaded_image.is_watermarked)
+        self.assertEqual(uploaded_image.content_hash, expected_hash)
+
+        with Image.open(uploaded_image.image) as stored_image:
+            pixels = list(stored_image.convert("RGB").crop((130, 80, 180, 120)).getdata())
+
+        self.assertTrue(any(pixel != source_color for pixel in pixels))
 
     def test_marketplace_filters_support_multi_select_and_numeric_ranges(self):
         brand = CategoryFilter.objects.create(

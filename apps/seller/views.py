@@ -8,6 +8,7 @@ from rest_framework.views import APIView
 from apps.common.permissions import IsNotBanned, IsVerifiedUser
 from apps.listings.models import Listing, ListingImage
 from apps.listings.image_fingerprints import validate_image_for_user
+from apps.listings.watermarks import add_qot_watermark
 
 from apps.chats.models import ChatThread
 
@@ -22,7 +23,11 @@ from .serializers import (
 
 from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
 
-from apps.listings.serializers import ListingCreateUpdateSerializer, ListingDetailSerializer
+from apps.listings.serializers import (
+    ListingCreateUpdateSerializer,
+    ListingDetailSerializer,
+    ListingImageSerializer,
+)
 
 
 class SellerDashboardAPIView(APIView):
@@ -314,7 +319,6 @@ class SellerListingDetailAPIView(generics.RetrieveUpdateDestroyAPIView):
             content_hash = validate_image_for_user(
                 user=self.request.user,
                 image_file=validated_image,
-                exclude_listing_id=listing.id,
                 seen_hashes=seen_image_hashes,
                 error_field="images",
             )
@@ -332,8 +336,10 @@ class SellerListingDetailAPIView(generics.RetrieveUpdateDestroyAPIView):
             for index, (image, content_hash) in enumerate(validated_images):
                 ListingImage.objects.create(
                     listing=listing,
-                    image=image,
+                    image=add_qot_watermark(image),
                     content_hash=content_hash,
+                    is_watermarked=True,
+                    is_primary=start_order == 0 and index == 0,
                     sort_order=start_order + index,
                 )
 
