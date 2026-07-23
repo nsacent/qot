@@ -4,6 +4,7 @@ from django.core.management.base import BaseCommand
 from django.utils import timezone
 
 from apps.listings.models import PendingListingImage
+from apps.listings.image_processing import delete_listing_image_files
 
 
 class Command(BaseCommand):
@@ -19,7 +20,7 @@ class Command(BaseCommand):
         )
 
         for pending_image in pending_images:
-            pending_image.image.delete(save=False)
+            delete_listing_image_files(pending_image)
             pending_image.delete()
 
         self.stdout.write(

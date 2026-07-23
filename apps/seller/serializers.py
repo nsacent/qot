@@ -43,12 +43,13 @@ class SellerListingSerializer(serializers.ModelSerializer):
         if not image:
             return None
 
+        display_image = image.card_image or image.image
         request = self.context.get("request")
 
         if request:
-            return request.build_absolute_uri(image.image.url)
+            return request.build_absolute_uri(display_image.url)
 
-        return image.image.url
+        return display_image.url
     
     def get_image_count(self, obj):
         annotated_count = getattr(obj, "image_count", None)

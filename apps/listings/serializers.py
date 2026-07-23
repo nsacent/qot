@@ -4,11 +4,15 @@ from django.utils import timezone
 from PIL import Image
 from rest_framework import serializers
 
+from .image_processing import MIN_IMAGE_SIZE, normalize_crop_value
 from .models import Listing, ListingDraft, ListingImage, ListingAttribute, PendingListingImage
 
 
 class ListingImageSerializer(serializers.ModelSerializer):
     image_url = serializers.SerializerMethodField()
+    source_image_url = serializers.SerializerMethodField()
+    card_image_url = serializers.SerializerMethodField()
+    social_image_url = serializers.SerializerMethodField()
 
     class Meta:
         model = ListingImage
@@ -16,35 +20,73 @@ class ListingImageSerializer(serializers.ModelSerializer):
             "id",
             "image",
             "image_url",
+            "source_image_url",
+            "card_image_url",
+            "social_image_url",
             "is_primary",
             "sort_order",
+            "crop_x",
+            "crop_y",
+            "crop_zoom",
             "created_at",
         ]
         read_only_fields = [
             "id",
             "image_url",
+            "source_image_url",
+            "card_image_url",
+            "social_image_url",
             "is_primary",
             "created_at",
-            
         ]
 
-    def get_image_url(self, obj):
-        if not obj.image:
+    def _absolute_url(self, field):
+        if not field:
             return None
 
         request = self.context.get("request")
 
         if request:
-            return request.build_absolute_uri(obj.image.url)
+            return request.build_absolute_uri(field.url)
 
-        return obj.image.url
+        return field.url
+
+    def get_image_url(self, obj):
+        return self._absolute_url(obj.image)
+
+    def get_source_image_url(self, obj):
+        request = self.context.get("request")
+        request_user = getattr(request, "user", None)
+
+        if not request_user or not request_user.is_authenticated:
+            return None
+
+        if request_user != obj.listing.seller and not request_user.is_staff:
+            return None
+
+        return self._absolute_url(obj.source_image or obj.image)
+
+    def get_card_image_url(self, obj):
+        return self._absolute_url(obj.card_image or obj.image)
+
+    def get_social_image_url(self, obj):
+        return self._absolute_url(obj.social_image or obj.card_image or obj.image)
+
+    def validate_crop_x(self, value):
+        return normalize_crop_value(value, 0.5, 0.0, 1.0)
+
+    def validate_crop_y(self, value):
+        return normalize_crop_value(value, 0.5, 0.0, 1.0)
+
+    def validate_crop_zoom(self, value):
+        return normalize_crop_value(value, 1.0, 1.0, 2.5)
 
     def validate_image(self, image):
-        max_size = 5 * 1024 * 1024
+        max_size = 10 * 1024 * 1024
 
         if image.size > max_size:
             raise serializers.ValidationError(
-                "Image size must not exceed 5MB."
+                "Image size must not exceed 10MB."
             )
 
         allowed_extensions = ["jpg", "jpeg", "png", "webp"]
@@ -73,6 +115,17 @@ class ListingImageSerializer(serializers.ModelSerializer):
             if img.format not in allowed_formats:
                 raise serializers.ValidationError(
                     "Only JPG, JPEG, PNG, and WEBP images are allowed."
+                )
+
+            minimum_width, minimum_height = MIN_IMAGE_SIZE
+            width, height = img.size
+
+            if (
+                min(width, height) < min(minimum_width, minimum_height)
+                or max(width, height) < max(minimum_width, minimum_height)
+            ):
+                raise serializers.ValidationError(
+                    "Image resolution must be at least 600 × 450 pixels."
                 )
         except serializers.ValidationError:
             raise
@@ -119,7 +172,23 @@ class ListingDraftSerializer(serializers.ModelSerializer):
             if request:
                 image_url = request.build_absolute_uri(image_url)
 
-            result.append({"id": image.id, "image_url": image_url})
+            source_field = image.source_image or image.image
+            card_field = image.card_image or image.image
+            source_url = source_field.url
+            card_url = card_field.url
+            if request:
+                source_url = request.build_absolute_uri(source_url)
+                card_url = request.build_absolute_uri(card_url)
+
+            result.append({
+                "id": image.id,
+                "image_url": image_url,
+                "source_image_url": source_url,
+                "card_image_url": card_url,
+                "crop_x": image.crop_x,
+                "crop_y": image.crop_y,
+                "crop_zoom": image.crop_zoom,
+            })
 
         return result
 
@@ -274,12 +343,14 @@ class ListingListSerializer(serializers.ModelSerializer):
         if not image or not image.image:
             return None
 
+        display_image = image.card_image or image.image
+
         request = self.context.get("request")
 
         if request:
-            return request.build_absolute_uri(image.image.url)
+            return request.build_absolute_uri(display_image.url)
 
-        return image.image.url
+        return display_image.url
     
     def get_image_count(self, obj):
         annotated_count = getattr(obj, "image_count", None)

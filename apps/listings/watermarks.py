@@ -15,6 +15,44 @@ def _watermark_font(size):
         return ImageFont.load_default()
 
 
+def apply_qot_watermark(image):
+    """Return an RGBA image with a subtle, centred QOT watermark."""
+    watermarked_source = image.convert("RGBA")
+    shortest_side = max(1, min(watermarked_source.size))
+    font_size = max(16, int(shortest_side * 0.11))
+    font = _watermark_font(font_size)
+    overlay = Image.new("RGBA", watermarked_source.size, (0, 0, 0, 0))
+    draw = ImageDraw.Draw(overlay)
+    text_box = draw.textbbox((0, 0), WATERMARK_TEXT, font=font, stroke_width=1)
+    text_width = text_box[2] - text_box[0]
+    text_height = text_box[3] - text_box[1]
+    padding_x = max(8, int(font_size * 0.42))
+    padding_y = max(5, int(font_size * 0.22))
+    box_width = text_width + (padding_x * 2)
+    box_height = text_height + (padding_y * 2)
+    left = max(0, (watermarked_source.width - box_width) // 2)
+    top = max(0, (watermarked_source.height - box_height) // 2)
+    radius = max(6, int(box_height * 0.28))
+
+    draw.rounded_rectangle(
+        (left, top, left + box_width, top + box_height),
+        radius=radius,
+        fill=(15, 23, 42, 52),
+        outline=(255, 255, 255, 38),
+        width=max(1, int(shortest_side * 0.002)),
+    )
+    draw.text(
+        (left + padding_x, top + padding_y - text_box[1]),
+        WATERMARK_TEXT,
+        font=font,
+        fill=(255, 255, 255, 142),
+        stroke_width=1,
+        stroke_fill=(15, 23, 42, 72),
+    )
+
+    return Image.alpha_composite(watermarked_source, overlay)
+
+
 def add_qot_watermark(image_file):
     """Return a watermarked image file without modifying the source upload."""
     try:
@@ -26,38 +64,7 @@ def add_qot_watermark(image_file):
         source_format = (source.format or "PNG").upper()
         image = ImageOps.exif_transpose(source).convert("RGBA")
 
-    shortest_side = max(1, min(image.size))
-    font_size = max(9, int(shortest_side * 0.075))
-    font = _watermark_font(font_size)
-    overlay = Image.new("RGBA", image.size, (0, 0, 0, 0))
-    draw = ImageDraw.Draw(overlay)
-    text_box = draw.textbbox((0, 0), WATERMARK_TEXT, font=font, stroke_width=1)
-    text_width = text_box[2] - text_box[0]
-    text_height = text_box[3] - text_box[1]
-    padding_x = max(3, int(font_size * 0.45))
-    padding_y = max(2, int(font_size * 0.28))
-    margin = max(3, int(shortest_side * 0.025))
-    box_width = text_width + (padding_x * 2)
-    box_height = text_height + (padding_y * 2)
-    left = max(0, image.width - box_width - margin)
-    top = max(0, image.height - box_height - margin)
-    radius = max(2, int(box_height * 0.28))
-
-    draw.rounded_rectangle(
-        (left, top, left + box_width, top + box_height),
-        radius=radius,
-        fill=(15, 23, 42, 115),
-    )
-    draw.text(
-        (left + padding_x, top + padding_y - text_box[1]),
-        WATERMARK_TEXT,
-        font=font,
-        fill=(255, 255, 255, 225),
-        stroke_width=1,
-        stroke_fill=(15, 23, 42, 150),
-    )
-
-    watermarked = Image.alpha_composite(image, overlay)
+    watermarked = apply_qot_watermark(image)
     output = BytesIO()
     save_format = source_format if source_format in {"JPEG", "PNG", "WEBP"} else "PNG"
     save_options = {}

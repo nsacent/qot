@@ -121,9 +121,27 @@ class ListingImage(models.Model):
     )
 
     image = models.ImageField(upload_to="listings/images/")
+    source_image = models.ImageField(
+        upload_to="listings/source/",
+        blank=True,
+        default="",
+    )
+    card_image = models.ImageField(
+        upload_to="listings/cards/",
+        blank=True,
+        default="",
+    )
+    social_image = models.ImageField(
+        upload_to="listings/social/",
+        blank=True,
+        default="",
+    )
     content_hash = models.CharField(max_length=64, blank=True, default="", db_index=True)
     is_watermarked = models.BooleanField(default=False, db_index=True)
     is_primary = models.BooleanField(default=False)
+    crop_x = models.FloatField(default=0.5)
+    crop_y = models.FloatField(default=0.5)
+    crop_zoom = models.FloatField(default=1.0)
 
     sort_order = models.PositiveIntegerField(default=0)
 
@@ -146,8 +164,26 @@ class PendingListingImage(models.Model):
         related_name="pending_listing_images",
     )
     image = models.ImageField(upload_to="listings/images/")
+    source_image = models.ImageField(
+        upload_to="listings/source/",
+        blank=True,
+        default="",
+    )
+    card_image = models.ImageField(
+        upload_to="listings/cards/",
+        blank=True,
+        default="",
+    )
+    social_image = models.ImageField(
+        upload_to="listings/social/",
+        blank=True,
+        default="",
+    )
     content_hash = models.CharField(max_length=64, blank=True, default="", db_index=True)
     is_watermarked = models.BooleanField(default=False, db_index=True)
+    crop_x = models.FloatField(default=0.5)
+    crop_y = models.FloatField(default=0.5)
+    crop_zoom = models.FloatField(default=1.0)
     reserved_for_draft = models.BooleanField(default=False, db_index=True)
     created_at = models.DateTimeField(auto_now_add=True, db_index=True)
 

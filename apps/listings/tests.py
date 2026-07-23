@@ -83,7 +83,7 @@ class ListingLifecycleTests(APITestCase):
         self,
         name="photo.png",
         color=(249, 115, 22),
-        size=(12, 12),
+        size=(800, 600),
     ):
         image_bytes = BytesIO()
         Image.new("RGB", size, color=color).save(image_bytes, format="PNG")
@@ -560,7 +560,7 @@ class ListingLifecycleTests(APITestCase):
         upload = self.make_image(
             "watermark.png",
             color=source_color,
-            size=(180, 120),
+            size=(800, 600),
         )
         expected_hash = calculate_content_hash(upload)
 
@@ -574,11 +574,17 @@ class ListingLifecycleTests(APITestCase):
         pending_image = PendingListingImage.objects.get(pk=response.data["id"])
         self.assertTrue(pending_image.is_watermarked)
         self.assertEqual(pending_image.content_hash, expected_hash)
+        self.assertTrue(pending_image.source_image)
+        self.assertTrue(pending_image.card_image)
+        self.assertTrue(pending_image.social_image)
 
-        with Image.open(pending_image.image) as stored_image:
-            pixels = list(stored_image.convert("RGB").crop((130, 80, 180, 120)).getdata())
+        with Image.open(pending_image.card_image) as card_image:
+            self.assertEqual(card_image.size, (800, 600))
+            self.assertEqual(card_image.format, "WEBP")
 
-        self.assertTrue(any(pixel != source_color for pixel in pixels))
+        with Image.open(pending_image.social_image) as social_image:
+            self.assertEqual(social_image.size, (1200, 630))
+            self.assertEqual(social_image.format, "WEBP")
 
     def test_existing_ad_upload_rejects_photo_from_another_ad(self):
         source_listing = self.create_listing()
@@ -623,7 +629,7 @@ class ListingLifecycleTests(APITestCase):
         upload = self.make_image(
             "edit-upload.png",
             color=source_color,
-            size=(180, 120),
+            size=(800, 600),
         )
         expected_hash = calculate_content_hash(upload)
         self.authenticate_owner()
@@ -638,11 +644,37 @@ class ListingLifecycleTests(APITestCase):
         uploaded_image = listing.images.get()
         self.assertTrue(uploaded_image.is_watermarked)
         self.assertEqual(uploaded_image.content_hash, expected_hash)
+        self.assertTrue(uploaded_image.source_image)
+        self.assertTrue(uploaded_image.card_image)
+        self.assertTrue(uploaded_image.social_image)
 
-        with Image.open(uploaded_image.image) as stored_image:
-            pixels = list(stored_image.convert("RGB").crop((130, 80, 180, 120)).getdata())
+    def test_owner_can_adjust_existing_photo_crop(self):
+        listing = self.create_listing()
+        self.authenticate_owner()
+        upload_response = self.client.post(
+            f"/api/v1/listings/{listing.id}/images/",
+            {"image": self.make_image("crop-source.png", size=(1200, 800))},
+            format="multipart",
+        )
+        image = listing.images.get(pk=upload_response.data["id"])
+        original_card_name = image.card_image.name
 
-        self.assertTrue(any(pixel != source_color for pixel in pixels))
+        crop_response = self.client.patch(
+            f"/api/v1/listings/{listing.id}/images/{image.id}/crop/",
+            {"crop_x": 0.75, "crop_y": 0.3, "crop_zoom": 1.6},
+            format="json",
+        )
+
+        image.refresh_from_db()
+        self.assertEqual(crop_response.status_code, status.HTTP_200_OK)
+        self.assertAlmostEqual(image.crop_x, 0.75)
+        self.assertAlmostEqual(image.crop_y, 0.3)
+        self.assertAlmostEqual(image.crop_zoom, 1.6)
+        self.assertNotEqual(image.card_image.name, original_card_name)
+        self.assertFalse((Path(self.media_directory.name) / original_card_name).exists())
+
+        with Image.open(image.card_image) as card_image:
+            self.assertEqual(card_image.size, (800, 600))
 
     def test_marketplace_filters_support_multi_select_and_numeric_ranges(self):
         brand = CategoryFilter.objects.create(

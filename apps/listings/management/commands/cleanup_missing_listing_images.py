@@ -1,6 +1,7 @@
 from django.core.management.base import BaseCommand
 from django.db import transaction
 
+from apps.listings.image_processing import delete_listing_image_files
 from apps.listings.models import Listing, ListingImage
 
 
@@ -39,6 +40,9 @@ class Command(BaseCommand):
         missing_image_ids = [image.id for image in missing_images]
 
         with transaction.atomic():
+            for image in missing_images:
+                delete_listing_image_files(image)
+
             ListingImage.objects.filter(id__in=missing_image_ids).delete()
 
             for listing in Listing.objects.filter(id__in=affected_listing_ids):
