@@ -253,6 +253,10 @@ def normalize_existing_phones(apps, schema_editor):
 
 
 class Migration(migrations.Migration):
+    # PostgreSQL must commit the related-object transfers before it can ALTER
+    # accounts_user to add the check constraint.
+    atomic = False
+
     dependencies = [
         ("accounts", "0007_email_verification_status"),
     ]
@@ -261,6 +265,7 @@ class Migration(migrations.Migration):
         migrations.RunPython(
             normalize_existing_phones,
             migrations.RunPython.noop,
+            atomic=True,
         ),
         migrations.AddConstraint(
             model_name="user",
