@@ -124,6 +124,7 @@ class UserProfileAdmin(admin.ModelAdmin):
     list_display = [
         "user",
         "business_name",
+        "timezone",
         "trust_score",
         "total_listings",
         "created_at",
@@ -135,6 +136,7 @@ class UserProfileAdmin(admin.ModelAdmin):
         "business_name",
     ]
     list_filter = [
+        "timezone",
         "created_at",
     ]
     readonly_fields = [

@@ -3,6 +3,7 @@ from django.contrib.auth import authenticate
 from django.contrib.auth.tokens import default_token_generator
 from django.utils.encoding import force_str
 from django.utils.http import urlsafe_base64_decode
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from rest_framework import serializers
 from rest_framework.exceptions import AuthenticationFailed, PermissionDenied
 from rest_framework_simplejwt.serializers import TokenRefreshSerializer
@@ -37,6 +38,7 @@ class UserProfileSerializer(serializers.ModelSerializer):
             "default_city_name",
             "default_region_name",
             "notification_preferences",
+            "timezone",
             "trust_score",
             "total_listings",
             "created_at",
@@ -75,6 +77,23 @@ class UserProfileSerializer(serializers.ModelSerializer):
             )
 
         return value
+
+    def validate_timezone(self, value):
+        return validate_timezone_name(value)
+
+
+def validate_timezone_name(value):
+    timezone_name = str(value or "").strip()
+
+    if not timezone_name:
+        raise serializers.ValidationError("Select a timezone.")
+
+    try:
+        ZoneInfo(timezone_name)
+    except ZoneInfoNotFoundError as error:
+        raise serializers.ValidationError("Select a valid timezone.") from error
+
+    return timezone_name
 
 
 class UserSerializer(serializers.ModelSerializer):
@@ -317,6 +336,11 @@ class ProfileUpdateSerializer(serializers.ModelSerializer):
         required=False,
         allow_null=True,
     )
+    timezone = serializers.CharField(
+        write_only=True,
+        required=False,
+        max_length=64,
+    )
 
     class Meta:
         model = User
@@ -330,6 +354,7 @@ class ProfileUpdateSerializer(serializers.ModelSerializer):
             "bio",
             "business_name",
             "default_city",
+            "timezone",
         ]
         read_only_fields = ["email"]
 
@@ -338,6 +363,9 @@ class ProfileUpdateSerializer(serializers.ModelSerializer):
 
     def validate_cover_photo(self, value):
         return self._validate_profile_image(value)
+
+    def validate_timezone(self, value):
+        return validate_timezone_name(value)
 
     def validate_phone(self, value):
         if not value:
@@ -383,6 +411,7 @@ class ProfileUpdateSerializer(serializers.ModelSerializer):
                 "bio",
                 "business_name",
                 "default_city",
+                "timezone",
             ]
             if field in validated_data
         }
@@ -409,6 +438,7 @@ class ProfileUpdateSerializer(serializers.ModelSerializer):
                 setattr(profile, field, value)
 
             profile.save()
+            instance._state.fields_cache.pop("profile", None)
 
         return instance
     

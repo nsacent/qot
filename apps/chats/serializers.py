@@ -78,6 +78,7 @@ class ChatThreadSerializer(serializers.ModelSerializer):
 
     other_user_name = serializers.SerializerMethodField()
     other_user_phone = serializers.SerializerMethodField()
+    other_user_avatar = serializers.SerializerMethodField()
     unread_count = serializers.SerializerMethodField()
 
     class Meta:
@@ -92,6 +93,7 @@ class ChatThreadSerializer(serializers.ModelSerializer):
             "unread_count",
             "other_user_name",
             "other_user_phone",
+            "other_user_avatar",
             "last_message",
             "last_message_at",
             "buyer_unread_count",
@@ -122,6 +124,20 @@ class ChatThreadSerializer(serializers.ModelSerializer):
             return obj.seller.phone
 
         return obj.buyer.phone
+
+    def get_other_user_avatar(self, obj):
+        request = self.context.get("request")
+
+        if not request:
+            return None
+
+        other_user = obj.seller if request.user == obj.buyer else obj.buyer
+        profile = getattr(other_user, "profile", None)
+
+        if not profile or not profile.avatar:
+            return None
+
+        return request.build_absolute_uri(profile.avatar.url)
 
     def get_unread_count(self, obj):
         request = self.context.get("request")

@@ -608,6 +608,28 @@ class NotificationPreferenceTests(APITestCase):
         self.assertEqual(me_response.data["profile"]["default_city_name"], "Kampala")
         self.assertEqual(me_response.data["profile"]["default_region_name"], "Central")
 
+    def test_timezone_is_saved_and_returned(self):
+        response = self.client.patch(
+            self.me_url,
+            {"timezone": "Africa/Nairobi"},
+            format="json",
+        )
+        self.user.profile.refresh_from_db()
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(self.user.profile.timezone, "Africa/Nairobi")
+        self.assertEqual(response.data["profile"]["timezone"], "Africa/Nairobi")
+
+    def test_invalid_timezone_is_rejected(self):
+        response = self.client.patch(
+            self.me_url,
+            {"timezone": "Africa/Not-A-Place"},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("timezone", response.data)
+
 
 class ProfileMediaTests(APITestCase):
     me_url = "/api/v1/auth/me/"

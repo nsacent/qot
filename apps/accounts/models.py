@@ -127,6 +127,7 @@ class UserProfile(models.Model):
         default=default_notification_preferences,
         blank=True,
     )
+    timezone = models.CharField(max_length=64, default="Africa/Kampala")
 
     trust_score = models.PositiveIntegerField(default=0)
     total_listings = models.PositiveIntegerField(default=0)

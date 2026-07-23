@@ -1,7 +1,10 @@
+from django.core.management import call_command
 from django.core.management.base import BaseCommand
 from django.utils.text import slugify
 
 from apps.categories.models import Category
+from apps.categories.catalog_sync import sync_category_filter_catalog
+from apps.categories.models import CategoryFilter, CategoryFilterOption
 from apps.locations.models import Region, City
 
 CATEGORIES = [
@@ -312,6 +315,8 @@ class Command(BaseCommand):
 
     def handle(self, *args, **options):
         self.seed_categories()
+        sync_category_filter_catalog(Category, CategoryFilter, CategoryFilterOption)
+        call_command("clean_legacy_categories")
         self.seed_locations()
 
         self.stdout.write(

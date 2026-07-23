@@ -1,7 +1,8 @@
 import json
+import math
 
 from django.db import transaction
-from django.db.models import F,Q
+from django.db.models import Count, F, Q
 from django.utils.text import slugify
 from .filters import ListingFilter
 
@@ -9,11 +10,13 @@ from rest_framework import generics, permissions, status
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from .models import Listing, ListingDraft, ListingImage, PendingListingImage
+from .models import Listing, ListingAttribute, ListingDraft, ListingImage, PendingListingImage
+from apps.categories.models import Category, CategoryFilter
 from .image_fingerprints import (
     validate_image_for_user,
     validate_staged_image_for_user,
 )
+from .watermarks import add_qot_watermark
 from .permissions import IsListingOwnerOrReadOnly
 
 from decimal import Decimal, InvalidOperation
@@ -161,7 +164,9 @@ class ListingListCreateAPIView(generics.ListCreateAPIView):
                 seen_hashes=seen_image_hashes,
                 error_field="images",
             )
-            validated_images.append((validated_image, content_hash))
+            validated_images.append(
+                (add_qot_watermark(validated_image), content_hash, True)
+            )
 
         serializer = self.get_serializer(data=payload)
         serializer.is_valid(raise_exception=True)
@@ -198,15 +203,17 @@ class ListingListCreateAPIView(generics.ListCreateAPIView):
                 (
                     staged_by_id[image_id].image.name,
                     staged_image_hashes[image_id],
+                    staged_by_id[image_id].is_watermarked,
                 )
                 for image_id in staged_image_ids
             ] + validated_images
 
-            for index, (image, content_hash) in enumerate(ordered_images):
+            for index, (image, content_hash, is_watermarked) in enumerate(ordered_images):
                 ListingImage.objects.create(
                     listing=listing,
                     image=image,
                     content_hash=content_hash,
+                    is_watermarked=is_watermarked,
                     is_primary=index == 0,
                     sort_order=index,
                 )
@@ -231,113 +238,157 @@ class ListingListCreateAPIView(generics.ListCreateAPIView):
             status=status.HTTP_201_CREATED,
         )
 
-    def filter_queryset(self, queryset):
-        queryset = super().filter_queryset(queryset)
 
-        reserved_params = {
-            "page",
-            "page_size",
-            "q",
-            "search",
-            "category",
-            "city",
-            "region",
-            "min_price",
-            "max_price",
-            "condition",
-            "status",
-            "seller",
-            "sort",
-            "mine",
-            "is_negotiable",
-            "negotiable",
+def public_listing_queryset():
+    return (
+        Listing.objects
+        .select_related("seller", "category", "category__parent", "city", "city__region")
+        .filter(status=Listing.STATUS_ACTIVE)
+        .filter(Q(expires_at__isnull=True) | Q(expires_at__gt=timezone.now()))
+    )
+
+
+def filtered_listings(query_params, excluded_params=()):
+    params = query_params.copy()
+    for key in excluded_params:
+        params.pop(key, None)
+    return ListingFilter(params, queryset=public_listing_queryset()).qs
+
+
+def rounded_price(value):
+    value = max(int(value), 0)
+    if value < 100_000:
+        unit = 10_000
+    elif value < 1_000_000:
+        unit = 100_000
+    elif value < 10_000_000:
+        unit = 500_000
+    elif value < 100_000_000:
+        unit = 5_000_000
+    else:
+        unit = 10_000_000
+    return max(unit, int(round(value / unit) * unit))
+
+
+def price_label(value):
+    if value >= 1_000_000_000:
+        return f"UGX {value / 1_000_000_000:g}B"
+    if value >= 1_000_000:
+        return f"UGX {value / 1_000_000:g}M"
+    if value >= 1_000:
+        return f"UGX {value / 1_000:g}K"
+    return f"UGX {value:,}"
+
+
+class ListingFacetsAPIView(APIView):
+    permission_classes = [permissions.AllowAny]
+
+    def get(self, request):
+        filtered = filtered_listings(request.query_params)
+        price_queryset = filtered_listings(
+            request.query_params,
+            ("min_price", "max_price", "sort", "page", "page_size"),
+        )
+        prices = list(
+            price_queryset.order_by("price").values_list("price", flat=True)[:5000]
+        )
+        price_presets = []
+        if prices:
+            indexes = [
+                min(len(prices) - 1, math.floor((len(prices) - 1) * ratio))
+                for ratio in (0.25, 0.5, 0.75)
+            ]
+            boundaries = sorted({rounded_price(prices[index]) for index in indexes})
+            ranges = []
+            if boundaries:
+                ranges.append((None, boundaries[0]))
+                ranges.extend(zip(boundaries, boundaries[1:]))
+                ranges.append((boundaries[-1], None))
+            for minimum, maximum in ranges:
+                bucket = price_queryset
+                if minimum is not None:
+                    bucket = bucket.filter(price__gte=minimum)
+                if maximum is not None:
+                    bucket = bucket.filter(price__lt=maximum)
+                count = bucket.count()
+                if not count:
+                    continue
+                if minimum is None:
+                    label = f"Under {price_label(maximum)}"
+                elif maximum is None:
+                    label = f"{price_label(minimum)} and above"
+                else:
+                    label = f"{price_label(minimum)} – {price_label(maximum)}"
+                price_presets.append({
+                    "label": label,
+                    "min_price": minimum,
+                    "max_price": maximum,
+                    "count": count,
+                })
+
+        condition_base = filtered_listings(request.query_params, ("condition",))
+        condition_counts = {
+            item["condition"]: item["count"]
+            for item in condition_base.values("condition").annotate(count=Count("id"))
         }
-
-        negotiable_value = (
-            self.request.query_params.get("is_negotiable")
-            or self.request.query_params.get("negotiable")
+        city_base = filtered_listings(request.query_params, ("city",))
+        city_counts = list(
+            city_base.values(
+                "city_id", "city__name", "city__slug",
+                "city__region_id", "city__region__name", "city__region__slug",
+            )
+            .annotate(count=Count("id"))
+            .order_by("-count", "city__name")[:100]
         )
 
-        if negotiable_value is not None and negotiable_value != "":
-            value = str(negotiable_value).strip().lower()
-
-            if value in ["true", "1", "yes", "on"]:
-                queryset = queryset.filter(is_negotiable=True)
-
-            elif value in ["false", "0", "no", "off"]:
-                queryset = queryset.filter(is_negotiable=False)
-
-        for key, value in self.request.query_params.items():
-            if key in reserved_params:
-                continue
-
-            if value is None or value == "":
-                continue
-
-            queryset = self.filter_by_attribute(queryset, key, value)
-
-        sort = self.request.query_params.get("sort")
-
-        if sort == "featured":
-            return (
-                queryset
-                .filter(is_featured=True)
-                .filter(
-                    Q(featured_until__isnull=True)
-                    | Q(featured_until__gt=timezone.now())
+        filter_facets = {}
+        category_slug = request.query_params.get("category")
+        category = Category.objects.filter(slug=category_slug, is_active=True).first()
+        if category:
+            category_filters = CategoryFilter.objects.filter(
+                category=category,
+                is_searchable=True,
+            ).prefetch_related("options")
+            for category_filter in category_filters:
+                facet_base = filtered_listings(
+                    request.query_params,
+                    (category_filter.key, f"{category_filter.key}_min", f"{category_filter.key}_max"),
                 )
-                .order_by("-created_at")
-                .distinct()
-            )
+                values = (
+                    ListingAttribute.objects
+                    .filter(
+                        listing__in=facet_base,
+                        category_filter=category_filter,
+                        value_text__isnull=False,
+                    )
+                    .exclude(value_text="")
+                    .values("value_text")
+                    .annotate(count=Count("listing_id", distinct=True))
+                    .order_by("-count", "value_text")[:40]
+                )
+                counts = {item["value_text"].lower(): item["count"] for item in values}
+                options = [
+                    {
+                        "value": option.value,
+                        "label": option.label,
+                        "count": counts.get(option.value.lower(), 0),
+                    }
+                    for option in category_filter.options.filter(is_active=True)
+                ]
+                if not options and category_filter.filter_type in ("text", "select", "multi_select"):
+                    options = [
+                        {"value": item["value_text"], "label": item["value_text"], "count": item["count"]}
+                        for item in values
+                    ]
+                filter_facets[category_filter.key] = {"options": options}
 
-        if sort == "newest":
-            return queryset.order_by("-created_at").distinct()
-
-        if sort == "oldest":
-            return queryset.order_by("created_at").distinct()
-
-        if sort == "price_low":
-            return queryset.order_by("price").distinct()
-
-        if sort == "price_high":
-            return queryset.order_by("-price").distinct()
-
-        if sort == "popular":
-            return queryset.order_by("-views_count", "-created_at").distinct()
-
-        return queryset.order_by("-created_at").distinct()
-
-    def filter_by_attribute(self, queryset, key, value):
-        value_text = str(value).strip()
-        value_lower = value_text.lower()
-
-        # Boolean filters: furnished=true / furnished=false
-        if value_lower in ["true", "false"]:
-            return queryset.filter(
-                attributes__category_filter__key=key,
-                attributes__value_boolean=(value_lower == "true"),
-            )
-
-        # Number filters: year=2012 / bedrooms=2 / mileage=85000
-        try:
-            number_value = Decimal(value_text)
-
-            number_queryset = queryset.filter(
-                attributes__category_filter__key=key,
-                attributes__value_number=number_value,
-            )
-
-            if number_queryset.exists():
-                return number_queryset
-
-        except (InvalidOperation, ValueError):
-            pass
-
-        # Text/select filters: brand=Toyota / storage=256GB / ram=16GB
-        return queryset.filter(
-            attributes__category_filter__key=key,
-            attributes__value_text__iexact=value_text,
-        )
+        return Response({
+            "total_count": filtered.count(),
+            "price_presets": price_presets,
+            "condition_counts": condition_counts,
+            "cities": city_counts,
+            "filters": filter_facets,
+        })
 
 
 class PendingListingImageAPIView(APIView):
@@ -377,8 +428,9 @@ class PendingListingImageAPIView(APIView):
 
         pending_image = PendingListingImage.objects.create(
             user=request.user,
-            image=validated_image,
+            image=add_qot_watermark(validated_image),
             content_hash=content_hash,
+            is_watermarked=True,
         )
 
         return Response(
@@ -904,7 +956,9 @@ class ListingImageUploadAPIView(APIView):
 
         image = serializer.save(
             listing=listing,
+            image=add_qot_watermark(validated_image),
             content_hash=content_hash,
+            is_watermarked=True,
             is_primary=is_first_image,
         )
 

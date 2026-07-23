@@ -74,7 +74,9 @@ class ChatThreadListCreateAPIView(generics.ListCreateAPIView):
                 "listing__category",
                 "listing__city",
                 "buyer",
+                "buyer__profile",
                 "seller",
+                "seller__profile",
             )
             .prefetch_related("listing__images")
             .annotate(
@@ -141,7 +143,9 @@ class ChatThreadDetailAPIView(generics.RetrieveAPIView):
                 "listing__category",
                 "listing__city",
                 "buyer",
+                "buyer__profile",
                 "seller",
+                "seller__profile",
             )
             .prefetch_related("listing__images")
         )

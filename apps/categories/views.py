@@ -2,7 +2,7 @@ from django.db.models import Count, F, Prefetch, Q
 from django.utils import timezone
 from rest_framework import generics, permissions
 
-from .models import Category, CategoryFilter
+from .models import Category, CategoryFilter, CategoryFilterOption
 from apps.listings.models import Listing
 from .serializers import (
     CategorySerializer,
@@ -53,6 +53,19 @@ def with_listing_counts(queryset):
     )
 
 
+def active_filter_prefetch():
+    active_options = CategoryFilterOption.objects.filter(is_active=True).order_by(
+        "sort_order", "label"
+    )
+    active_filters = (
+        CategoryFilter.objects
+        .filter(is_searchable=True)
+        .prefetch_related(Prefetch("options", queryset=active_options))
+        .order_by("sort_order", "name")
+    )
+    return Prefetch("filters", queryset=active_filters)
+
+
 class CategoryListAPIView(generics.ListAPIView):
     serializer_class = CategorySerializer
     permission_classes = [permissions.AllowAny]
@@ -75,10 +88,7 @@ class CategoryDetailAPIView(generics.RetrieveAPIView):
         return with_listing_counts(
             Category.objects
             .filter(is_active=True)
-            .prefetch_related(
-                "filters",
-                "filters__options",
-            )
+            .prefetch_related(active_filter_prefetch())
         )
 
 
@@ -96,6 +106,11 @@ class CategoryFilterListAPIView(generics.ListAPIView):
                 category__is_active=True,
                 is_searchable=True,
             )
-            .prefetch_related("options")
+            .prefetch_related(
+                Prefetch(
+                    "options",
+                    queryset=CategoryFilterOption.objects.filter(is_active=True),
+                )
+            )
             .order_by("sort_order", "name")
         )

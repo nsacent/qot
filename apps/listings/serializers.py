@@ -285,7 +285,7 @@ class ListingDetailSerializer(serializers.ModelSerializer):
     )
 
     images = ListingImageSerializer(many=True, read_only=True)
-    attributes = ListingAttributeSerializer(many=True, read_only=True)
+    attributes = serializers.SerializerMethodField()
     image_count = serializers.SerializerMethodField()
 
     def get_image_count(self, obj):
@@ -293,6 +293,12 @@ class ListingDetailSerializer(serializers.ModelSerializer):
         if annotated_count is not None:
             return annotated_count
         return obj.images.count()
+
+    def get_attributes(self, obj):
+        attributes = obj.attributes.filter(
+            category_filter__is_searchable=True,
+        ).select_related("category_filter")
+        return ListingAttributeSerializer(attributes, many=True).data
 
     def get_category_parent_name(self, obj):
         parent = getattr(obj.category, "parent", None)
@@ -421,6 +427,7 @@ class ListingCreateUpdateSerializer(serializers.ModelSerializer):
                 category_filter = CategoryFilter.objects.get(
                     id=category_filter_id,
                     category=listing.category,
+                    is_searchable=True,
                 )
             except CategoryFilter.DoesNotExist:
                 raise serializers.ValidationError(

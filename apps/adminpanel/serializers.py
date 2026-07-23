@@ -17,6 +17,8 @@ from apps.payments.models import Payment, PromotionPackage
 from apps.chats.models import ChatReport, ChatBlock
 
 class AdminUserSerializer(serializers.ModelSerializer):
+    avatar_url = serializers.SerializerMethodField()
+
     class Meta:
         model = User
         fields = [
@@ -31,11 +33,20 @@ class AdminUserSerializer(serializers.ModelSerializer):
             "banned_reason",
             "is_staff",
             "date_joined",
+            "avatar_url",
         ]
+
+    def get_avatar_url(self, obj):
+        profile = getattr(obj, "profile", None)
+
+        if not profile or not profile.avatar:
+            return None
+
+        request = self.context.get("request")
+        return request.build_absolute_uri(profile.avatar.url) if request else profile.avatar.url
 
 
 class AdminUserDetailSerializer(AdminUserSerializer):
-    avatar_url = serializers.SerializerMethodField()
     business_name = serializers.CharField(
         source="profile.business_name",
         read_only=True,
@@ -62,7 +73,6 @@ class AdminUserDetailSerializer(AdminUserSerializer):
         fields = AdminUserSerializer.Meta.fields + [
             "last_login",
             "updated_at",
-            "avatar_url",
             "business_name",
             "bio",
             "trust_score",
@@ -74,19 +84,6 @@ class AdminUserDetailSerializer(AdminUserSerializer):
             "permissions",
         ]
         read_only_fields = fields
-
-    def get_avatar_url(self, obj):
-        profile = getattr(obj, "profile", None)
-
-        if not profile or not profile.avatar:
-            return None
-
-        request = self.context.get("request")
-
-        if request:
-            return request.build_absolute_uri(profile.avatar.url)
-
-        return profile.avatar.url
 
     def get_google_connected(self, obj):
         return bool(obj.google_sub)

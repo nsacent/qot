@@ -12,10 +12,17 @@ from rest_framework import status
 from rest_framework.test import APITestCase
 
 from apps.accounts.models import User
-from apps.categories.models import Category
+from apps.categories.models import Category, CategoryFilter
 from apps.locations.models import City, Region
 
-from .models import Listing, ListingDraft, ListingImage, PendingListingImage
+from .image_fingerprints import calculate_content_hash
+from .models import (
+    Listing,
+    ListingAttribute,
+    ListingDraft,
+    ListingImage,
+    PendingListingImage,
+)
 
 
 class ListingLifecycleTests(APITestCase):
@@ -72,9 +79,14 @@ class ListingLifecycleTests(APITestCase):
     def authenticate_owner(self):
         self.client.force_authenticate(self.owner)
 
-    def make_image(self, name="photo.png", color=(249, 115, 22)):
+    def make_image(
+        self,
+        name="photo.png",
+        color=(249, 115, 22),
+        size=(12, 12),
+    ):
         image_bytes = BytesIO()
-        Image.new("RGB", (12, 12), color=color).save(image_bytes, format="PNG")
+        Image.new("RGB", size, color=color).save(image_bytes, format="PNG")
         return SimpleUploadedFile(
             name,
             image_bytes.getvalue(),
@@ -109,6 +121,39 @@ class ListingLifecycleTests(APITestCase):
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(listing.views_count, 1)
+
+    def test_public_detail_hides_obsolete_category_attributes(self):
+        listing = self.create_listing()
+        visible_filter = CategoryFilter.objects.create(
+            category=self.category,
+            name="Brand",
+            key="brand",
+            filter_type=CategoryFilter.TYPE_TEXT,
+            is_searchable=True,
+        )
+        hidden_filter = CategoryFilter.objects.create(
+            category=self.category,
+            name="Wrong Specification",
+            key="wrong-specification",
+            filter_type=CategoryFilter.TYPE_TEXT,
+            is_searchable=False,
+        )
+        ListingAttribute.objects.create(
+            listing=listing,
+            category_filter=visible_filter,
+            value_text="QOT",
+        )
+        ListingAttribute.objects.create(
+            listing=listing,
+            category_filter=hidden_filter,
+            value_text="Old value",
+        )
+
+        response = self.client.get(f"/api/v1/listings/{listing.id}/")
+        keys = [attribute["filter_key"] for attribute in response.data["attributes"]]
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(keys, ["brand"])
 
     def test_pending_listing_cannot_bypass_moderation(self):
         listing = self.create_listing(Listing.STATUS_PENDING)
@@ -365,6 +410,32 @@ class ListingLifecycleTests(APITestCase):
         self.assertEqual(duplicate_response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertIn("already been selected", str(duplicate_response.data))
 
+    def test_staged_photo_is_watermarked_and_keeps_original_fingerprint(self):
+        self.authenticate_owner()
+        source_color = (30, 64, 175)
+        upload = self.make_image(
+            "watermark.png",
+            color=source_color,
+            size=(180, 120),
+        )
+        expected_hash = calculate_content_hash(upload)
+
+        response = self.client.post(
+            "/api/v1/listings/images/stage/",
+            {"image": upload},
+            format="multipart",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        pending_image = PendingListingImage.objects.get(pk=response.data["id"])
+        self.assertTrue(pending_image.is_watermarked)
+        self.assertEqual(pending_image.content_hash, expected_hash)
+
+        with Image.open(pending_image.image) as stored_image:
+            pixels = list(stored_image.convert("RGB").crop((130, 80, 180, 120)).getdata())
+
+        self.assertTrue(any(pixel != source_color for pixel in pixels))
+
     def test_existing_ad_upload_rejects_photo_from_another_ad(self):
         source_listing = self.create_listing()
         target_listing = self.create_listing()
@@ -383,3 +454,98 @@ class ListingLifecycleTests(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertIn("already used in another", str(response.data))
         self.assertEqual(target_listing.images.count(), 0)
+
+    def test_marketplace_filters_support_multi_select_and_numeric_ranges(self):
+        brand = CategoryFilter.objects.create(
+            category=self.category,
+            name="Brand",
+            key="brand",
+            filter_type=CategoryFilter.TYPE_MULTI_SELECT,
+        )
+        year = CategoryFilter.objects.create(
+            category=self.category,
+            name="Year",
+            key="year",
+            filter_type=CategoryFilter.TYPE_NUMBER,
+        )
+        toyota = self.create_listing(title="Toyota", slug="toyota")
+        honda = self.create_listing(title="Honda", slug="honda")
+        old_toyota = self.create_listing(title="Old Toyota", slug="old-toyota")
+        for listing, brand_value, year_value in (
+            (toyota, "Toyota", 2021),
+            (honda, "Honda", 2019),
+            (old_toyota, "Toyota", 2012),
+        ):
+            ListingAttribute.objects.create(
+                listing=listing, category_filter=brand, value_text=brand_value
+            )
+            ListingAttribute.objects.create(
+                listing=listing, category_filter=year, value_number=year_value
+            )
+
+        response = self.client.get(
+            "/api/v1/listings/?brand=Toyota,Honda&year_min=2018"
+        )
+        ids = {item["id"] for item in response.data["results"]}
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(ids, {toyota.id, honda.id})
+
+    def test_verified_recent_and_most_viewed_filters(self):
+        unverified = User.objects.create_user(
+            phone="+256700001003",
+            email="unverified-seller@example.com",
+            full_name="Unverified Seller",
+            password="test-password",
+            is_verified=False,
+        )
+        verified_listing = self.create_listing(views_count=8)
+        unverified_listing = self.create_listing(
+            seller=unverified,
+            title="Unverified ad",
+            slug="unverified-ad",
+            views_count=100,
+        )
+        old_listing = self.create_listing(title="Old ad", slug="old-ad", views_count=20)
+        Listing.objects.filter(pk=old_listing.pk).update(
+            created_at=timezone.now() - timedelta(days=45)
+        )
+
+        verified_response = self.client.get(
+            "/api/v1/listings/?verified_seller=true&posted_within=30"
+        )
+        popular_response = self.client.get("/api/v1/listings/?sort=most_viewed")
+
+        self.assertEqual(
+            [item["id"] for item in verified_response.data["results"]],
+            [verified_listing.id],
+        )
+        self.assertEqual(popular_response.data["results"][0]["id"], unverified_listing.id)
+
+    def test_facets_return_live_result_counts_and_price_presets(self):
+        brand = CategoryFilter.objects.create(
+            category=self.category,
+            name="Brand",
+            key="brand",
+            filter_type=CategoryFilter.TYPE_MULTI_SELECT,
+        )
+        first = self.create_listing(price="100000.00")
+        second = self.create_listing(price="500000.00")
+        ListingAttribute.objects.create(
+            listing=first, category_filter=brand, value_text="QOT"
+        )
+        ListingAttribute.objects.create(
+            listing=second, category_filter=brand, value_text="Other"
+        )
+
+        response = self.client.get(
+            f"/api/v1/listings/facets/?category={self.category.slug}"
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["total_count"], 2)
+        self.assertTrue(response.data["price_presets"])
+        self.assertEqual(
+            {item["value"]: item["count"] for item in response.data["filters"]["brand"]["options"]},
+            {"QOT": 1, "Other": 1},
+        )

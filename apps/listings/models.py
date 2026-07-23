@@ -122,6 +122,7 @@ class ListingImage(models.Model):
 
     image = models.ImageField(upload_to="listings/images/")
     content_hash = models.CharField(max_length=64, blank=True, default="", db_index=True)
+    is_watermarked = models.BooleanField(default=False, db_index=True)
     is_primary = models.BooleanField(default=False)
 
     sort_order = models.PositiveIntegerField(default=0)
@@ -146,6 +147,7 @@ class PendingListingImage(models.Model):
     )
     image = models.ImageField(upload_to="listings/images/")
     content_hash = models.CharField(max_length=64, blank=True, default="", db_index=True)
+    is_watermarked = models.BooleanField(default=False, db_index=True)
     reserved_for_draft = models.BooleanField(default=False, db_index=True)
     created_at = models.DateTimeField(auto_now_add=True, db_index=True)
 
