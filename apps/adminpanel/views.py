@@ -1,4 +1,5 @@
 from django.db.models import Sum, Q
+from django.http import FileResponse
 from rest_framework import generics, permissions, status
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -12,7 +13,16 @@ from apps.searches.alerts import notify_saved_search_matches_for_listing
 from datetime import timedelta
 from django.utils import timezone
 
-from .permissions import IsAdminOrModerator
+from .permissions import IsAdministrator, IsAdminOrModerator
+from .backups import (
+    BackupBusyError,
+    BackupError,
+    BackupNotFoundError,
+    create_backup,
+    get_backup_path,
+    list_backups,
+    restore_backup,
+)
 
 from apps.payments.models import Payment, PromotionPackage
 
@@ -48,6 +58,97 @@ from apps.notifications.services import (
     create_payment_paid_notification,
     create_payment_failed_notification,
 )
+
+
+def _backup_actor(user):
+    return {
+        "id": user.id,
+        "email": user.email,
+        "full_name": user.full_name,
+    }
+
+
+class AdminBackupListCreateAPIView(APIView):
+    permission_classes = [permissions.IsAuthenticated, IsAdministrator]
+
+    def get(self, request):
+        backups = list_backups()
+        return Response(
+            {"count": len(backups), "results": backups},
+            status=status.HTTP_200_OK,
+        )
+
+    def post(self, request):
+        try:
+            backup = create_backup(created_by=_backup_actor(request.user))
+        except BackupBusyError as error:
+            return Response({"detail": str(error)}, status=status.HTTP_409_CONFLICT)
+        except BackupError:
+            return Response(
+                {"detail": "The database backup could not be created."},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+        return Response(
+            {"message": "Database backup created successfully.", "backup": backup},
+            status=status.HTTP_201_CREATED,
+        )
+
+
+class AdminBackupDownloadAPIView(APIView):
+    permission_classes = [permissions.IsAuthenticated, IsAdministrator]
+
+    def get(self, request, filename):
+        try:
+            path = get_backup_path(filename)
+        except BackupNotFoundError as error:
+            return Response({"detail": str(error)}, status=status.HTTP_404_NOT_FOUND)
+
+        return FileResponse(
+            path.open("rb"),
+            as_attachment=True,
+            filename=path.name,
+            content_type="application/octet-stream",
+        )
+
+
+class AdminBackupRestoreAPIView(APIView):
+    permission_classes = [permissions.IsAuthenticated, IsAdministrator]
+
+    def post(self, request, filename):
+        if request.data.get("confirmation") != "RESTORE":
+            return Response(
+                {"detail": 'Enter "RESTORE" to confirm this operation.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            result = restore_backup(
+                filename,
+                restored_by=_backup_actor(request.user),
+            )
+        except BackupNotFoundError as error:
+            return Response({"detail": str(error)}, status=status.HTTP_404_NOT_FOUND)
+        except BackupBusyError as error:
+            return Response({"detail": str(error)}, status=status.HTTP_409_CONFLICT)
+        except BackupError:
+            return Response(
+                {
+                    "detail": (
+                        "The restore operation failed. A safety backup was created "
+                        "before restoration was attempted."
+                    )
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+        return Response(
+            {
+                "message": "Database restored successfully.",
+                **result,
+            },
+            status=status.HTTP_200_OK,
+        )
 
 class AdminDashboardAPIView(APIView):
     permission_classes = [

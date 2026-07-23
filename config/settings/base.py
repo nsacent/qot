@@ -17,6 +17,13 @@ from decouple import Config, Csv, RepositoryEnv, config
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
 
+ADMIN_BACKUP_ROOT = Path(
+    config("ADMIN_BACKUP_ROOT", default=str(BASE_DIR / "admin_backups"))
+)
+ADMIN_BACKUP_TIMEOUT = config("ADMIN_BACKUP_TIMEOUT", default=900, cast=int)
+PG_DUMP_BINARY = config("PG_DUMP_BINARY", default="pg_dump")
+PG_RESTORE_BINARY = config("PG_RESTORE_BINARY", default="pg_restore")
+
 _AFRICAS_TALKING_ENV_FILE = BASE_DIR / ".env.africas_talking"
 _africas_talking_config = (
     Config(RepositoryEnv(str(_AFRICAS_TALKING_ENV_FILE)))

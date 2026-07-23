@@ -1,5 +1,10 @@
 from datetime import timedelta
+import sqlite3
+import tempfile
+from pathlib import Path
+from unittest.mock import patch
 
+from django.test import SimpleTestCase, override_settings
 from django.utils import timezone
 from rest_framework import status
 from rest_framework.test import APITestCase
@@ -8,6 +13,132 @@ from apps.accounts.models import User
 from apps.categories.models import Category, CategoryFilter
 from apps.listings.models import Listing, ListingAttribute
 from apps.locations.models import City, Region
+from apps.adminpanel.backups import create_backup, list_backups, restore_backup
+
+
+class BackupServiceRoundTripTests(SimpleTestCase):
+    def setUp(self):
+        self.temporary_directory = tempfile.TemporaryDirectory()
+        self.root = Path(self.temporary_directory.name)
+        self.database_path = self.root / "source.sqlite3"
+        self.backup_root = self.root / "backups"
+        self.settings_override = override_settings(
+            DATABASES={
+                "default": {
+                    "ENGINE": "django.db.backends.sqlite3",
+                    "NAME": self.database_path,
+                }
+            },
+            ADMIN_BACKUP_ROOT=self.backup_root,
+        )
+        self.settings_override.enable()
+
+        with sqlite3.connect(self.database_path) as connection:
+            connection.execute("CREATE TABLE sample (value TEXT NOT NULL)")
+            connection.execute("INSERT INTO sample (value) VALUES ('before')")
+
+    def tearDown(self):
+        self.settings_override.disable()
+        self.temporary_directory.cleanup()
+
+    def read_value(self):
+        with sqlite3.connect(self.database_path) as connection:
+            return connection.execute("SELECT value FROM sample").fetchone()[0]
+
+    def test_create_list_and_restore_round_trip(self):
+        backup = create_backup(created_by={"id": 1}, kind="manual")
+
+        with sqlite3.connect(self.database_path) as connection:
+            connection.execute("UPDATE sample SET value = 'after'")
+
+        result = restore_backup(backup["name"], restored_by={"id": 1})
+
+        self.assertEqual(self.read_value(), "before")
+        self.assertEqual(result["backup"]["name"], backup["name"])
+        self.assertEqual(result["safety_backup"]["kind"], "pre_restore_safety")
+        self.assertEqual(len(list_backups()), 2)
+
+
+class AdminBackupManagementTests(APITestCase):
+    def setUp(self):
+        self.admin = User.objects.create_user(
+            phone="+256700001001",
+            email="backup-admin@example.com",
+            full_name="Backup Admin",
+            password="test-password",
+            role=User.ROLE_ADMIN,
+            is_staff=True,
+        )
+        self.moderator = User.objects.create_user(
+            phone="+256700001002",
+            email="backup-moderator@example.com",
+            full_name="Backup Moderator",
+            password="test-password",
+            role=User.ROLE_MODERATOR,
+            is_staff=True,
+        )
+
+    @patch("apps.adminpanel.views.list_backups")
+    def test_admin_can_list_backups(self, list_backups_mock):
+        list_backups_mock.return_value = [{"name": "qot-db-20260723-120000-acde1234.dump"}]
+        self.client.force_authenticate(self.admin)
+
+        response = self.client.get("/api/v1/admin-panel/backups/")
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["count"], 1)
+
+    @patch("apps.adminpanel.views.create_backup")
+    def test_admin_can_create_backup(self, create_backup_mock):
+        create_backup_mock.return_value = {
+            "name": "qot-db-20260723-120000-acde1234.dump",
+            "size_bytes": 1024,
+        }
+        self.client.force_authenticate(self.admin)
+
+        response = self.client.post("/api/v1/admin-panel/backups/", {}, format="json")
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        create_backup_mock.assert_called_once()
+
+    @patch("apps.adminpanel.views.restore_backup")
+    def test_restore_requires_explicit_confirmation(self, restore_backup_mock):
+        self.client.force_authenticate(self.admin)
+        filename = "qot-db-20260723-120000-acde1234.dump"
+
+        response = self.client.post(
+            f"/api/v1/admin-panel/backups/{filename}/restore/",
+            {"confirmation": "restore"},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        restore_backup_mock.assert_not_called()
+
+    @patch("apps.adminpanel.views.restore_backup")
+    def test_confirmed_restore_creates_a_safety_backup(self, restore_backup_mock):
+        filename = "qot-db-20260723-120000-acde1234.dump"
+        restore_backup_mock.return_value = {
+            "backup": {"name": filename},
+            "safety_backup": {"name": "qot-db-20260723-120100-acde5678.dump"},
+        }
+        self.client.force_authenticate(self.admin)
+
+        response = self.client.post(
+            f"/api/v1/admin-panel/backups/{filename}/restore/",
+            {"confirmation": "RESTORE"},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertIn("safety_backup", response.data)
+
+    def test_moderator_cannot_access_database_backups(self):
+        self.client.force_authenticate(self.moderator)
+
+        response = self.client.get("/api/v1/admin-panel/backups/")
+
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
 
 
 class AdminUserManagementTests(APITestCase):

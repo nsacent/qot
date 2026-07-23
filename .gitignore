@@ -15,6 +15,7 @@ db.sqlite3
 media/
 staticfiles/
 logs/
+admin_backups/
 *.log
 
 # Mac

@@ -8,7 +8,9 @@ from unittest.mock import patch
 from django.conf import settings
 from django.contrib.auth.hashers import check_password
 from django.core import mail
+from django.core.exceptions import ValidationError
 from django.core.files.uploadedfile import SimpleUploadedFile
+from django.db import IntegrityError, transaction
 from django.test import override_settings
 from django.utils import timezone
 from PIL import Image
@@ -20,6 +22,59 @@ from apps.locations.models import City, Region
 
 from .models import User, VerificationCode
 from .sms import send_sms
+
+
+class CanonicalPhoneStorageTests(APITestCase):
+    def test_user_manager_stores_local_number_in_canonical_format(self):
+        user = User.objects.create_user(
+            phone="0702 912 148",
+            full_name="Canonical Number",
+            password="test-password",
+        )
+
+        self.assertEqual(user.phone, "+256702912148")
+
+    def test_model_save_normalizes_country_code_without_plus(self):
+        user = User(
+            phone="256702912149",
+            full_name="Canonical Model Number",
+        )
+        user.set_password("test-password")
+        user.save()
+
+        self.assertEqual(user.phone, "+256702912149")
+
+    def test_phone_variants_cannot_create_duplicate_accounts(self):
+        User.objects.create_user(
+            phone="+256702912150",
+            full_name="First Account",
+            password="test-password",
+        )
+
+        with self.assertRaises(IntegrityError):
+            with transaction.atomic():
+                User.objects.create_user(
+                    phone="0702912150",
+                    full_name="Duplicate Account",
+                    password="test-password",
+                )
+
+    def test_database_constraint_rejects_noncanonical_bulk_write(self):
+        user = User.objects.create_user(
+            phone="+256702912151",
+            full_name="Constraint Account",
+            password="test-password",
+        )
+
+        with self.assertRaises(IntegrityError):
+            with transaction.atomic():
+                User.objects.filter(pk=user.pk).update(phone="0702912151")
+
+    def test_invalid_mobile_number_is_rejected_by_model_save(self):
+        user = User(phone="+256312345678", full_name="Invalid Number")
+
+        with self.assertRaises(ValidationError):
+            user.save()
 
 
 class RegistrationTests(APITestCase):

@@ -27,6 +27,9 @@ from .views import (
     AdminChatReportDetailAPIView,
     ResolveChatReportAPIView,
     AdminChatBlockListAPIView,
+    AdminBackupListCreateAPIView,
+    AdminBackupDownloadAPIView,
+    AdminBackupRestoreAPIView,
 )
 
 
@@ -35,6 +38,9 @@ app_name = "adminpanel"
 
 urlpatterns = [
     path("dashboard/", AdminDashboardAPIView.as_view(), name="dashboard"),
+    path("backups/", AdminBackupListCreateAPIView.as_view(), name="backup_list_create"),
+    path("backups/<str:filename>/download/", AdminBackupDownloadAPIView.as_view(), name="backup_download"),
+    path("backups/<str:filename>/restore/", AdminBackupRestoreAPIView.as_view(), name="backup_restore"),
 
     path("listings/", AdminListingListAPIView.as_view(), name="listing_list"),
     path("listings/pending/", PendingListingListAPIView.as_view(), name="pending_listing_list"),

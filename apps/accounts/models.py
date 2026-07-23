@@ -1,8 +1,10 @@
 from django.contrib.auth.models import AbstractBaseUser, PermissionsMixin
+from django.core.exceptions import ValidationError
 from django.db import models
 from django.utils import timezone
 
 from .managers import UserManager
+from .phone_numbers import normalize_ugandan_phone
 
 
 def default_notification_preferences():
@@ -66,6 +68,26 @@ class User(AbstractBaseUser, PermissionsMixin):
             models.Index(fields=["email"]),
             models.Index(fields=["is_active", "is_banned"]),
         ]
+        constraints = [
+            models.CheckConstraint(
+                check=(
+                    models.Q(phone__isnull=True)
+                    | models.Q(phone__regex=r"^\+2567[0-9]{8}$")
+                ),
+                name="accounts_user_phone_canonical_ug",
+            ),
+        ]
+
+    def save(self, *args, **kwargs):
+        if self.phone:
+            try:
+                self.phone = normalize_ugandan_phone(self.phone)
+            except ValueError as error:
+                raise ValidationError({"phone": str(error)}) from error
+        else:
+            self.phone = None
+
+        super().save(*args, **kwargs)
 
     def __str__(self):
         return self.phone or self.email or self.full_name

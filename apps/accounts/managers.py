@@ -1,5 +1,7 @@
 from django.contrib.auth.base_user import BaseUserManager
 
+from .phone_numbers import normalize_ugandan_phone
+
 
 class UserManager(BaseUserManager):
     def create_user(self, phone=None, email=None, password=None, **extra_fields):
@@ -8,6 +10,9 @@ class UserManager(BaseUserManager):
 
         if email:
             email = self.normalize_email(email)
+
+        if phone:
+            phone = normalize_ugandan_phone(phone)
 
         user = self.model(
             phone=phone,
