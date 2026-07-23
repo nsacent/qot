@@ -274,7 +274,11 @@ class SellerListingDetailAPIView(generics.RetrieveUpdateDestroyAPIView):
             Listing.objects
             .filter(seller=self.request.user)
             .select_related("seller", "category", "city")
-            .prefetch_related("images", "attributes")
+            .prefetch_related(
+                "images",
+                "attributes",
+                "attributes__category_filter__options",
+            )
         )
 
     def get_serializer_class(self):

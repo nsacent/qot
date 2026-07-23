@@ -12,7 +12,7 @@ from rest_framework import status
 from rest_framework.test import APITestCase
 
 from apps.accounts.models import User
-from apps.categories.models import Category, CategoryFilter
+from apps.categories.models import Category, CategoryFilter, CategoryFilterOption
 from apps.locations.models import City, Region
 
 from .image_fingerprints import calculate_content_hash
@@ -154,6 +154,71 @@ class ListingLifecycleTests(APITestCase):
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(keys, ["brand"])
+
+    def test_public_detail_displays_option_labels_for_legacy_ids(self):
+        listing = self.create_listing()
+        ram_filter = CategoryFilter.objects.create(
+            category=self.category,
+            name="RAM",
+            key="ram",
+            filter_type=CategoryFilter.TYPE_SELECT,
+            is_searchable=True,
+        )
+        option = CategoryFilterOption.objects.create(
+            category_filter=ram_filter,
+            label="8 GB",
+            value="8gb",
+        )
+        ListingAttribute.objects.create(
+            listing=listing,
+            category_filter=ram_filter,
+            value_text=str(option.id),
+        )
+
+        response = self.client.get(f"/api/v1/listings/{listing.id}/")
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["attributes"][0]["value_text"], str(option.id))
+        self.assertEqual(response.data["attributes"][0]["display_value"], "8 GB")
+
+    def test_listing_attributes_store_canonical_option_values(self):
+        ram_filter = CategoryFilter.objects.create(
+            category=self.category,
+            name="RAM",
+            key="ram",
+            filter_type=CategoryFilter.TYPE_SELECT,
+            is_searchable=True,
+        )
+        option = CategoryFilterOption.objects.create(
+            category_filter=ram_filter,
+            label="16 GB",
+            value="16gb",
+        )
+        self.authenticate_owner()
+
+        response = self.client.post(
+            "/api/v1/listings/",
+            {
+                "category": self.category.id,
+                "city": self.city.id,
+                "title": "Laptop with canonical RAM",
+                "description": "A complete advert used to test category options.",
+                "price": "100000.00",
+                "condition": Listing.CONDITION_USED,
+                "attributes": [
+                    {
+                        "category_filter_id": ram_filter.id,
+                        "value_text": str(option.id),
+                    }
+                ],
+                "staged_image_ids": [],
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        attribute = ListingAttribute.objects.get(listing_id=response.data["id"])
+        self.assertEqual(attribute.value_text, "16gb")
 
     def test_pending_listing_cannot_bypass_moderation(self):
         listing = self.create_listing(Listing.STATUS_PENDING)

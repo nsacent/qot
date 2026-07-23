@@ -141,6 +141,29 @@ class ListingAttributeSerializer(serializers.ModelSerializer):
         source="category_filter.filter_type",
         read_only=True,
     )
+    display_value = serializers.SerializerMethodField()
+
+    def get_display_value(self, obj):
+        if obj.value_text is None:
+            return None
+
+        raw_value = str(obj.value_text).strip()
+
+        if not raw_value:
+            return None
+
+        options = list(obj.category_filter.options.all())
+
+        for option in options:
+            if str(option.value) == raw_value:
+                return option.label
+
+        if raw_value.isdigit():
+            for option in options:
+                if option.id == int(raw_value):
+                    return option.label
+
+        return None
 
     class Meta:
         model = ListingAttribute
@@ -150,6 +173,7 @@ class ListingAttributeSerializer(serializers.ModelSerializer):
             "filter_name",
             "filter_key",
             "filter_type",
+            "display_value",
             "value_text",
             "value_number",
             "value_boolean",
@@ -161,6 +185,7 @@ class ListingAttributeSerializer(serializers.ModelSerializer):
             "filter_name",
             "filter_key",
             "filter_type",
+            "display_value",
             "created_at",
         ]
 
@@ -297,7 +322,9 @@ class ListingDetailSerializer(serializers.ModelSerializer):
     def get_attributes(self, obj):
         attributes = obj.attributes.filter(
             category_filter__is_searchable=True,
-        ).select_related("category_filter")
+        ).select_related("category_filter").prefetch_related(
+            "category_filter__options"
+        )
         return ListingAttributeSerializer(attributes, many=True).data
 
     def get_category_parent_name(self, obj):
@@ -441,6 +468,44 @@ class ListingCreateUpdateSerializer(serializers.ModelSerializer):
             value_text = item.get("value_text")
             value_number = item.get("value_number")
             value_boolean = item.get("value_boolean")
+
+            if value_text is not None:
+                value_text = str(value_text).strip()
+
+                options = list(
+                    category_filter.options.filter(is_active=True)
+                )
+
+                if options:
+                    selected_option = next(
+                        (
+                            option
+                            for option in options
+                            if str(option.value) == value_text
+                        ),
+                        None,
+                    )
+
+                    if selected_option is None and value_text.isdigit():
+                        selected_option = next(
+                            (
+                                option
+                                for option in options
+                                if option.id == int(value_text)
+                            ),
+                            None,
+                        )
+
+                    if selected_option is None:
+                        raise serializers.ValidationError(
+                            {
+                                "attributes": [
+                                    f"Invalid option for {category_filter.name}."
+                                ]
+                            }
+                        )
+
+                    value_text = selected_option.value
 
             if category_filter.filter_type in ["text", "select", "multi_select"]:
                 if not value_text:

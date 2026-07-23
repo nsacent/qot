@@ -69,7 +69,11 @@ class ListingListCreateAPIView(generics.ListCreateAPIView):
                 "city",
                 "city__region",
             )
-            .prefetch_related("images", "attributes")
+            .prefetch_related(
+                "images",
+                "attributes",
+                "attributes__category_filter__options",
+            )
             .exclude(status=Listing.STATUS_DELETED)
             .order_by("-is_featured", "-created_at")
         )
@@ -605,7 +609,11 @@ class ListingDetailAPIView(generics.RetrieveUpdateDestroyAPIView):
         queryset = (
             Listing.objects
             .select_related("seller", "category", "category__parent", "city")
-            .prefetch_related("images", "attributes", "attributes__category_filter")
+            .prefetch_related(
+                "images",
+                "attributes",
+                "attributes__category_filter__options",
+            )
             .exclude(status=Listing.STATUS_DELETED)
         )
 

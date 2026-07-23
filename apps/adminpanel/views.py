@@ -417,7 +417,7 @@ class AdminListingDetailAPIView(generics.RetrieveUpdateAPIView):
             .prefetch_related(
                 "images",
                 "attributes",
-                "attributes__category_filter",
+                "attributes__category_filter__options",
                 "reports",
             )
         )
