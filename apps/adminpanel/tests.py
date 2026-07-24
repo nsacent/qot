@@ -14,6 +14,7 @@ from apps.categories.models import Category, CategoryFilter
 from apps.listings.models import Listing, ListingAttribute
 from apps.locations.models import City, Region
 from apps.adminpanel.backups import create_backup, list_backups, restore_backup
+from apps.adminpanel.models import AdminActivityLog
 
 
 class BackupServiceRoundTripTests(SimpleTestCase):
@@ -139,6 +140,122 @@ class AdminBackupManagementTests(APITestCase):
         response = self.client.get("/api/v1/admin-panel/backups/")
 
         self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
+
+class AdminActivityAuditTests(APITestCase):
+    def setUp(self):
+        self.admin = User.objects.create_user(
+            phone="+256700001101",
+            email="trace-admin@example.com",
+            full_name="Trace Admin",
+            password="test-password",
+            role=User.ROLE_ADMIN,
+            is_staff=True,
+        )
+        self.moderator = User.objects.create_user(
+            phone="+256700001102",
+            email="trace-moderator@example.com",
+            full_name="Trace Moderator",
+            password="test-password",
+            role=User.ROLE_MODERATOR,
+            is_staff=True,
+        )
+        self.user = User.objects.create_user(
+            phone="+256700001103",
+            email="trace-user@example.com",
+            full_name="Trace User",
+            password="test-password",
+        )
+
+    def test_moderator_action_is_recorded_with_actor_and_target(self):
+        self.client.force_authenticate(self.moderator)
+
+        response = self.client.post(
+            f"/api/v1/admin-panel/users/{self.user.id}/ban/",
+            {"banned_reason": "Repeated marketplace abuse"},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        activity = AdminActivityLog.objects.get()
+        self.assertEqual(activity.actor, self.moderator)
+        self.assertEqual(activity.actor_role, User.ROLE_MODERATOR)
+        self.assertEqual(activity.action, "user.ban")
+        self.assertEqual(activity.target_id, str(self.user.id))
+        self.assertEqual(activity.status_code, status.HTTP_200_OK)
+        self.assertEqual(
+            activity.payload["banned_reason"],
+            "Repeated marketplace abuse",
+        )
+
+    def test_failed_staff_action_is_also_recorded(self):
+        self.client.force_authenticate(self.moderator)
+
+        response = self.client.post(
+            f"/api/v1/admin-panel/users/{self.admin.id}/ban/",
+            {"banned_reason": "Not permitted"},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+        activity = AdminActivityLog.objects.get()
+        self.assertEqual(activity.action, "user.ban")
+        self.assertEqual(activity.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_sensitive_values_are_redacted(self):
+        self.client.force_authenticate(self.admin)
+
+        response = self.client.patch(
+            f"/api/v1/admin-panel/users/{self.user.id}/",
+            {"password": "must-never-be-saved", "full_name": "Updated User"},
+            format="json",
+        )
+
+        self.assertIn(response.status_code, {status.HTTP_200_OK, status.HTTP_400_BAD_REQUEST})
+        activity = AdminActivityLog.objects.get()
+        self.assertEqual(activity.payload["password"], "[redacted]")
+
+    def test_report_moderation_action_is_also_recorded(self):
+        self.client.force_authenticate(self.moderator)
+
+        response = self.client.post(
+            "/api/v1/moderation/reports/999999/resolve/",
+            {"resolution_note": "Reviewed by moderation"},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+        activity = AdminActivityLog.objects.get()
+        self.assertEqual(activity.action, "report.resolve")
+        self.assertEqual(activity.target_type, "listing report")
+        self.assertEqual(activity.target_id, "999999")
+        self.assertEqual(activity.status_code, status.HTTP_404_NOT_FOUND)
+
+    def test_only_administrators_can_view_the_system_trace(self):
+        AdminActivityLog.objects.create(
+            actor=self.moderator,
+            actor_name=self.moderator.full_name,
+            actor_email=self.moderator.email,
+            actor_role=self.moderator.role,
+            action="user.ban",
+            description="Restricted user #10",
+            method="POST",
+            path="/api/v1/admin-panel/users/10/ban/",
+            target_type="user",
+            target_id="10",
+            status_code=200,
+        )
+
+        self.client.force_authenticate(self.admin)
+        admin_response = self.client.get("/api/v1/admin-panel/activity/")
+
+        self.client.force_authenticate(self.moderator)
+        moderator_response = self.client.get("/api/v1/admin-panel/activity/")
+
+        self.assertEqual(admin_response.status_code, status.HTTP_200_OK)
+        self.assertEqual(admin_response.data["summary"]["total"], 1)
+        self.assertEqual(admin_response.data["results"][0]["actor_name"], "Trace Moderator")
+        self.assertEqual(moderator_response.status_code, status.HTTP_403_FORBIDDEN)
 
 
 class AdminUserManagementTests(APITestCase):

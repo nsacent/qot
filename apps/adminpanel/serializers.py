@@ -15,6 +15,36 @@ from apps.reviews.models import SellerReview
 from apps.payments.models import Payment, PromotionPackage
 
 from apps.chats.models import ChatReport, ChatBlock
+from .models import AdminActivityLog
+
+
+class AdminActivityLogSerializer(serializers.ModelSerializer):
+    successful = serializers.SerializerMethodField()
+
+    class Meta:
+        model = AdminActivityLog
+        fields = [
+            "id",
+            "actor",
+            "actor_name",
+            "actor_email",
+            "actor_role",
+            "action",
+            "description",
+            "method",
+            "path",
+            "target_type",
+            "target_id",
+            "status_code",
+            "successful",
+            "ip_address",
+            "payload",
+            "created_at",
+        ]
+        read_only_fields = fields
+
+    def get_successful(self, obj):
+        return obj.status_code < 400
 
 class AdminUserSerializer(serializers.ModelSerializer):
     avatar_url = serializers.SerializerMethodField()

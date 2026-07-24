@@ -1,4 +1,4 @@
-from django.db.models import Sum, Q
+from django.db.models import Count, Sum, Q
 from django.http import FileResponse
 from rest_framework import generics, permissions, status
 from rest_framework.response import Response
@@ -14,6 +14,7 @@ from datetime import timedelta
 from django.utils import timezone
 
 from .permissions import IsAdministrator, IsAdminOrModerator
+from .models import AdminActivityLog
 from .backups import (
     BackupBusyError,
     BackupError,
@@ -50,6 +51,7 @@ from .serializers import (
     AdminChatReportSerializer,
     ResolveChatReportSerializer,
     AdminChatBlockSerializer,
+    AdminActivityLogSerializer,
 )
 
 from apps.notifications.services import (
@@ -66,6 +68,79 @@ def _backup_actor(user):
         "email": user.email,
         "full_name": user.full_name,
     }
+
+
+class AdminActivityLogListAPIView(generics.ListAPIView):
+    serializer_class = AdminActivityLogSerializer
+    permission_classes = [permissions.IsAuthenticated, IsAdministrator]
+
+    def get_queryset(self):
+        queryset = AdminActivityLog.objects.select_related("actor").order_by(
+            "-created_at",
+            "-id",
+        )
+        search = self.request.query_params.get("search", "").strip()
+        actor = self.request.query_params.get("actor")
+        role = self.request.query_params.get("role")
+        result = self.request.query_params.get("result")
+        action = self.request.query_params.get("action")
+        target_type = self.request.query_params.get("target_type")
+        date_from = self.request.query_params.get("date_from")
+        date_to = self.request.query_params.get("date_to")
+
+        if search:
+            queryset = queryset.filter(
+                Q(actor_name__icontains=search)
+                | Q(actor_email__icontains=search)
+                | Q(description__icontains=search)
+                | Q(path__icontains=search)
+                | Q(target_id__icontains=search)
+            )
+
+        if actor:
+            queryset = queryset.filter(actor_id=actor)
+
+        if role in {User.ROLE_ADMIN, User.ROLE_MODERATOR}:
+            queryset = queryset.filter(actor_role=role)
+
+        if result == "success":
+            queryset = queryset.filter(status_code__lt=400)
+        elif result == "failed":
+            queryset = queryset.filter(status_code__gte=400)
+
+        if action:
+            queryset = queryset.filter(action=action)
+
+        if target_type:
+            queryset = queryset.filter(target_type=target_type)
+
+        if date_from:
+            queryset = queryset.filter(created_at__date__gte=date_from)
+
+        if date_to:
+            queryset = queryset.filter(created_at__date__lte=date_to)
+
+        return queryset
+
+    def list(self, request, *args, **kwargs):
+        queryset = self.filter_queryset(self.get_queryset())
+        summary = queryset.aggregate(
+            total=Count("id"),
+            successful=Count("id", filter=Q(status_code__lt=400)),
+            failed=Count("id", filter=Q(status_code__gte=400)),
+            administrators=Count("id", filter=Q(actor_role=User.ROLE_ADMIN)),
+            moderators=Count("id", filter=Q(actor_role=User.ROLE_MODERATOR)),
+        )
+        page = self.paginate_queryset(queryset)
+
+        if page is not None:
+            serializer = self.get_serializer(page, many=True)
+            response = self.get_paginated_response(serializer.data)
+            response.data["summary"] = summary
+            return response
+
+        serializer = self.get_serializer(queryset, many=True)
+        return Response({"results": serializer.data, "summary": summary})
 
 
 class AdminBackupListCreateAPIView(APIView):
