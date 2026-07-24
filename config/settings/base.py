@@ -245,7 +245,15 @@ CHANNEL_LAYERS = {
     "default": {
         "BACKEND": "channels_redis.core.RedisChannelLayer",
         "CONFIG": {
-            "hosts": [REDIS_URL],
+            # Channel receivers intentionally block while waiting for events.
+            # redis-py 8 defaults socket_timeout to five seconds, which would
+            # otherwise tear down every idle WebSocket connection.
+            "hosts": [
+                {
+                    "address": REDIS_URL,
+                    "socket_timeout": None,
+                }
+            ],
         },
     }
 }
