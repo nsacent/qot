@@ -2,11 +2,12 @@ from io import BytesIO
 from pathlib import Path
 
 from django.core.files.base import ContentFile
-from PIL import Image, ImageDraw, ImageFont, ImageOps, ImageStat
+from PIL import Image, ImageDraw, ImageFont, ImageOps
 
 
 WATERMARK_TEXT = "QOT"
-WATERMARK_ALPHA = 112
+WATERMARK_ALPHA = 150
+WATERMARK_SHADOW_ALPHA = 125
 
 
 def _watermark_font(size):
@@ -27,7 +28,7 @@ def _watermark_font(size):
 
 
 def apply_qot_watermark(image):
-    """Return an RGBA image with a subtle, contrast-aware QOT wordmark."""
+    """Return an RGBA image with a visible, borderless QOT wordmark."""
     watermarked_source = image.convert("RGBA")
     shortest_side = max(1, min(watermarked_source.size))
     font_size = max(20, int(shortest_side * 0.13))
@@ -39,22 +40,19 @@ def apply_qot_watermark(image):
     text_height = text_box[3] - text_box[1]
     left = max(0, (watermarked_source.width - text_width) // 2)
     top = max(0, (watermarked_source.height - text_height) // 2)
-    sample_padding = max(6, font_size // 4)
-    sample_box = (
-        max(0, left - sample_padding),
-        max(0, top - sample_padding),
-        min(watermarked_source.width, left + text_width + sample_padding),
-        min(watermarked_source.height, top + text_height + sample_padding),
-    )
-    local_brightness = ImageStat.Stat(
-        watermarked_source.convert("L").crop(sample_box)
-    ).mean[0]
-    text_colour = 20 if local_brightness >= 145 else 255
+    text_position = (left, top - text_box[1])
+    shadow_offset = max(2, font_size // 28)
     draw.text(
-        (left, top - text_box[1]),
+        (text_position[0] + shadow_offset, text_position[1] + shadow_offset),
         WATERMARK_TEXT,
         font=font,
-        fill=(text_colour, text_colour, text_colour, WATERMARK_ALPHA),
+        fill=(0, 0, 0, WATERMARK_SHADOW_ALPHA),
+    )
+    draw.text(
+        text_position,
+        WATERMARK_TEXT,
+        font=font,
+        fill=(255, 255, 255, WATERMARK_ALPHA),
     )
 
     return Image.alpha_composite(watermarked_source, overlay)

@@ -1,7 +1,10 @@
 import json
+from time import monotonic
 
 from asgiref.sync import sync_to_async
 from channels.generic.websocket import AsyncWebsocketConsumer
+from django.contrib.auth import get_user_model
+from django.utils import timezone
 
 from apps.notifications.services import create_message_notification
 
@@ -10,6 +13,15 @@ from .presence import connect_user, disconnect_user, refresh_user
 
 
 PRESENCE_GROUP = "chat_presence"
+LAST_SEEN_WRITE_INTERVAL_SECONDS = 60
+
+
+def update_user_last_seen(user_id):
+    last_seen_at = timezone.now()
+    get_user_model().objects.filter(pk=user_id).update(
+        last_seen_at=last_seen_at,
+    )
+    return last_seen_at.isoformat()
 
 
 class ChatPresenceMixin:
@@ -26,25 +38,28 @@ class ChatPresenceMixin:
             self.channel_name,
         )
 
+        last_seen_at = await self.persist_last_seen(force=True)
+
         connections = await sync_to_async(
             connect_user,
             thread_sensitive=False,
         )(self.user.id)
 
         if connections == 1:
-            await self.broadcast_presence(True)
+            await self.broadcast_presence(True, last_seen_at)
 
     async def stop_presence(self):
         if not getattr(self, "user", None) or not self.user.is_authenticated:
             return
 
+        last_seen_at = await self.persist_last_seen(force=True)
         connections = await sync_to_async(
             disconnect_user,
             thread_sensitive=False,
         )(self.user.id)
 
         if connections == 0:
-            await self.broadcast_presence(False)
+            await self.broadcast_presence(False, last_seen_at)
 
         if hasattr(self, "user_group_name"):
             await self.channel_layer.group_discard(
@@ -58,13 +73,29 @@ class ChatPresenceMixin:
                 self.channel_name,
             )
 
-    async def broadcast_presence(self, is_online):
+    async def persist_last_seen(self, force=False):
+        last_write = getattr(self, "last_seen_write_at", 0)
+
+        if (
+            not force
+            and monotonic() - last_write < LAST_SEEN_WRITE_INTERVAL_SECONDS
+        ):
+            return None
+
+        self.last_seen_write_at = monotonic()
+        return await sync_to_async(
+            update_user_last_seen,
+            thread_sensitive=False,
+        )(self.user.id)
+
+    async def broadcast_presence(self, is_online, last_seen_at=None):
         await self.channel_layer.group_send(
             PRESENCE_GROUP,
             {
                 "type": "presence_status",
                 "user_id": self.user.id,
                 "is_online": is_online,
+                "last_seen_at": last_seen_at,
             },
         )
 
@@ -73,6 +104,7 @@ class ChatPresenceMixin:
             refresh_user,
             thread_sensitive=False,
         )(self.user.id)
+        await self.persist_last_seen()
 
     async def presence_status(self, event):
         await self.send(
@@ -81,6 +113,7 @@ class ChatPresenceMixin:
                     "type": "presence",
                     "user_id": event["user_id"],
                     "is_online": event["is_online"],
+                    "last_seen_at": event.get("last_seen_at"),
                 }
             )
         )

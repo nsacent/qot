@@ -18,12 +18,14 @@ from apps.locations.models import City, Region
 
 from .models import (
     ChatMessage,
+    ChatMessageAttachment,
     ChatReport,
     ChatThread,
     ChatThreadParticipantState,
 )
 from .middleware import JWTAuthMiddlewareStack
 from .routing import websocket_urlpatterns
+from .consumers import update_user_last_seen
 from .socket_auth import (
     CHAT_SOCKET_TICKET_MAX_AGE_SECONDS,
     CHAT_SOCKET_TICKET_SALT,
@@ -149,6 +151,12 @@ class ChatDeliveryTests(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         self.assertEqual(response.data["chat_message"]["body"], "Here are the documents.")
         self.assertEqual(len(response.data["chat_message"]["attachments"]), 2)
+        first_attachment_data = response.data["chat_message"]["attachments"][0]
+        self.assertNotIn("file", first_attachment_data)
+        self.assertEqual(
+            first_attachment_data["file_url"],
+            f"/api/v1/chats/attachments/{first_attachment_data['id']}/",
+        )
 
         thread.refresh_from_db()
         message = ChatMessage.objects.get(thread=thread)
@@ -157,6 +165,29 @@ class ChatDeliveryTests(APITestCase):
         self.assertEqual(thread.seller_unread_count, 1)
         notification_mock.assert_called_once_with(thread, message)
         broadcast_mock.assert_called_once()
+
+        attachment = ChatMessageAttachment.objects.get(
+            pk=first_attachment_data["id"],
+        )
+        download_response = self.client.get(first_attachment_data["file_url"])
+        self.assertEqual(download_response.status_code, status.HTTP_200_OK)
+        self.assertEqual(
+            b"".join(download_response.streaming_content),
+            b"%PDF-1.4 test",
+        )
+
+        outsider = User.objects.create_user(
+            phone="+256700008003",
+            email="chat-outsider@example.com",
+            full_name="Chat Outsider",
+            password="test-password",
+            is_verified=True,
+        )
+        self.client.force_authenticate(outsider)
+        denied_response = self.client.get(
+            f"/api/v1/chats/attachments/{attachment.id}/",
+        )
+        self.assertEqual(denied_response.status_code, status.HTTP_403_FORBIDDEN)
 
     def test_unsupported_attachment_is_rejected(self):
         thread = ChatThread.objects.create(
@@ -313,7 +344,11 @@ class ChatDeliveryTests(APITestCase):
             }
         },
     )
-    def test_thread_socket_broadcasts_presence_and_typing(self):
+    @patch(
+        "apps.chats.consumers.update_user_last_seen",
+        return_value="2026-07-24T11:30:00+00:00",
+    )
+    def test_thread_socket_broadcasts_presence_and_typing(self, last_seen_mock):
         thread = ChatThread.objects.create(
             listing=self.listing,
             buyer=self.buyer,
@@ -367,6 +402,21 @@ class ChatDeliveryTests(APITestCase):
             self.assertTrue(typing_event["is_typing"])
 
             await seller_socket.disconnect()
+            offline_event = await receive_event(
+                buyer_socket,
+                "presence",
+                self.seller.id,
+            )
+            self.assertFalse(offline_event["is_online"])
+            self.assertTrue(offline_event["last_seen_at"])
             await buyer_socket.disconnect()
 
         async_to_sync(exercise_socket)()
+        self.assertTrue(last_seen_mock.called)
+
+    def test_last_seen_timestamp_is_persisted(self):
+        timestamp = update_user_last_seen(self.seller.id)
+
+        self.seller.refresh_from_db()
+        self.assertIsNotNone(self.seller.last_seen_at)
+        self.assertEqual(self.seller.last_seen_at.isoformat(), timestamp)

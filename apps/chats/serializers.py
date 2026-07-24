@@ -1,3 +1,4 @@
+from django.urls import reverse
 from rest_framework import serializers
 
 from apps.listings.models import Listing
@@ -21,7 +22,6 @@ class ChatMessageAttachmentSerializer(serializers.ModelSerializer):
         model = ChatMessageAttachment
         fields = [
             "id",
-            "file",
             "file_url",
             "file_type",
             "original_name",
@@ -31,15 +31,13 @@ class ChatMessageAttachmentSerializer(serializers.ModelSerializer):
         read_only_fields = fields
 
     def get_file_url(self, obj):
-        request = self.context.get("request")
-
         if not obj.file:
             return None
 
-        if request:
-            return request.build_absolute_uri(obj.file.url)
-
-        return obj.file.url
+        return reverse(
+            "chats:chat_attachment_download",
+            kwargs={"pk": obj.pk},
+        )
     
 
 class ChatMessageSerializer(serializers.ModelSerializer):
@@ -82,6 +80,7 @@ class ChatThreadSerializer(serializers.ModelSerializer):
     other_user_phone = serializers.SerializerMethodField()
     other_user_avatar = serializers.SerializerMethodField()
     other_user_online = serializers.SerializerMethodField()
+    other_user_last_seen = serializers.SerializerMethodField()
     unread_count = serializers.SerializerMethodField()
     is_favourite = serializers.SerializerMethodField()
     is_archived = serializers.SerializerMethodField()
@@ -102,6 +101,7 @@ class ChatThreadSerializer(serializers.ModelSerializer):
             "other_user_phone",
             "other_user_avatar",
             "other_user_online",
+            "other_user_last_seen",
             "last_message",
             "last_message_at",
             "buyer_unread_count",
@@ -190,6 +190,14 @@ class ChatThreadSerializer(serializers.ModelSerializer):
     def get_other_user_online(self, obj):
         user = self._other_user(obj)
         return is_user_online(user.id) if user else False
+
+    def get_other_user_last_seen(self, obj):
+        user = self._other_user(obj)
+
+        if not user:
+            return None
+
+        return user.last_seen_at or user.last_login or user.updated_at
 
     def get_is_favourite(self, obj):
         return self._state_value(obj, "user_is_favourite", "is_favourite")

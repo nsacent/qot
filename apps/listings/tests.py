@@ -36,6 +36,12 @@ class ListingWatermarkTests(APITestCase):
             self.assertIsNotNone(difference.getbbox())
             self.assertGreater(max(channel[1] for channel in difference.getextrema()), 80)
 
+    def test_watermark_is_visible_on_transparent_product_photos(self):
+        source = Image.new("RGBA", (800, 600), color=(0, 0, 0, 0))
+        watermarked = apply_qot_watermark(source)
+
+        self.assertGreater(watermarked.getchannel("A").getextrema()[1], 100)
+
 
 class ListingLifecycleTests(APITestCase):
     def setUp(self):

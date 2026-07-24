@@ -55,6 +55,7 @@ class User(AbstractBaseUser, PermissionsMixin):
     banned_reason = models.TextField(null=True, blank=True)
 
     date_joined = models.DateTimeField(default=timezone.now)
+    last_seen_at = models.DateTimeField(null=True, blank=True, db_index=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     USERNAME_FIELD = "phone"

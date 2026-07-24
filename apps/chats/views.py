@@ -1,4 +1,5 @@
 from django.db import transaction
+from django.http import FileResponse, Http404
 from django.db.models import BooleanField, Count, OuterRef, Q, Subquery, Value
 from django.db.models.functions import Coalesce
 from django.utils import timezone
@@ -689,6 +690,37 @@ class ChatAttachmentUploadAPIView(APIView):
             },
             status=status.HTTP_201_CREATED,
         )
+
+
+class ChatAttachmentDownloadAPIView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request, pk):
+        try:
+            attachment = ChatMessageAttachment.objects.select_related(
+                "message__thread",
+            ).get(pk=pk)
+        except ChatMessageAttachment.DoesNotExist as error:
+            raise Http404("Attachment not found.") from error
+
+        thread = attachment.message.thread
+        if request.user.id not in {thread.buyer_id, thread.seller_id}:
+            return Response(
+                {"detail": "You are not allowed to view this attachment."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        if not attachment.file:
+            raise Http404("Attachment file not found.")
+
+        response = FileResponse(
+            attachment.file.open("rb"),
+            as_attachment=request.query_params.get("download") == "1",
+            filename=attachment.original_name or attachment.file.name,
+        )
+        response["Cache-Control"] = "private, no-store"
+        response["X-Content-Type-Options"] = "nosniff"
+        return response
     
 
 
