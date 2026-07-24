@@ -469,6 +469,22 @@ class ListingCreateUpdateSerializer(serializers.ModelSerializer):
 
         return value
 
+    def validate_title(self, value):
+        value = value.strip()
+        if len(value) < 10:
+            raise serializers.ValidationError(
+                "Ad title must be at least 10 characters."
+            )
+        return value
+
+    def validate_description(self, value):
+        value = value.strip()
+        if len(value) < 30:
+            raise serializers.ValidationError(
+                "Ad description must be at least 30 characters."
+            )
+        return value
+
     def create(self, validated_data):
         attributes_data = validated_data.pop("attributes", [])
         request = self.context["request"]

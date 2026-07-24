@@ -2,58 +2,79 @@ from io import BytesIO
 from pathlib import Path
 
 from django.core.files.base import ContentFile
-from PIL import Image, ImageDraw, ImageFont, ImageOps
+from PIL import Image, ImageDraw, ImageOps
 
 
-WATERMARK_TEXT = "QOT"
-WATERMARK_ALPHA = 150
-WATERMARK_SHADOW_ALPHA = 125
+WATERMARK_ALPHA = 48
+WATERMARK_COLOR = (249, 115, 22)
+LOGO_VIEWBOX = (240, 100)
 
 
-def _watermark_font(size):
-    candidates = (
-        "DejaVuSans-Bold.ttf",
-        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
-        "/System/Library/Fonts/Supplemental/Arial Bold.ttf",
-        "/Library/Fonts/Arial Bold.ttf",
+def _qot_logo_mask(width):
+    """Render the same QOT geometry used by the website logo."""
+    width = max(72, int(width))
+    height = max(30, round(width * LOGO_VIEWBOX[1] / LOGO_VIEWBOX[0]))
+    antialias = 4
+    scale = width * antialias / LOGO_VIEWBOX[0]
+    mask = Image.new("L", (width * antialias, height * antialias), 0)
+    draw = ImageDraw.Draw(mask)
+
+    def point(x, y):
+        return round(x * scale), round(y * scale)
+
+    stroke_width = max(1, round(18 * scale))
+    for center_x in (40, 124):
+        center_y = 42
+        radius = 29
+        draw.ellipse(
+            (
+                *point(center_x - radius, center_y - radius),
+                *point(center_x + radius, center_y + radius),
+            ),
+            outline=255,
+            width=stroke_width,
+        )
+
+    draw.polygon(
+        [
+            point(45.77, 60.5),
+            point(58.5, 47.77),
+            point(94.23, 83.5),
+            point(81.5, 96.23),
+        ],
+        fill=255,
     )
 
-    for candidate in candidates:
-        try:
-            return ImageFont.truetype(candidate, size=size)
-        except OSError:
-            continue
+    t_outline = [
+        (178, 12), (196, 3), (196, 24), (226, 24), (226, 43),
+        (196, 43), (196, 68), (197, 73), (200, 77), (204, 79),
+        (208, 80), (224, 80), (224, 98), (208, 98), (201, 97),
+        (195, 95), (190, 92), (186, 88), (182, 83), (180, 76),
+        (178, 68),
+    ]
+    draw.polygon([point(x, y) for x, y in t_outline], fill=255)
 
-    return ImageFont.load_default()
+    return mask.resize((width, height), Image.Resampling.LANCZOS)
 
 
 def apply_qot_watermark(image):
-    """Return an RGBA image with a visible, borderless QOT wordmark."""
+    """Return an RGBA image with a faint, shadow-free QOT logo."""
     watermarked_source = image.convert("RGBA")
     shortest_side = max(1, min(watermarked_source.size))
-    font_size = max(20, int(shortest_side * 0.13))
-    font = _watermark_font(font_size)
+    logo_width = min(
+        int(watermarked_source.width * 0.34),
+        int(shortest_side * 0.52),
+    )
+    logo_mask = _qot_logo_mask(logo_width)
+    logo_alpha = logo_mask.point(
+        lambda value: round(value * WATERMARK_ALPHA / 255)
+    )
+    logo = Image.new("RGBA", logo_mask.size, (*WATERMARK_COLOR, 0))
+    logo.putalpha(logo_alpha)
     overlay = Image.new("RGBA", watermarked_source.size, (0, 0, 0, 0))
-    draw = ImageDraw.Draw(overlay)
-    text_box = draw.textbbox((0, 0), WATERMARK_TEXT, font=font)
-    text_width = text_box[2] - text_box[0]
-    text_height = text_box[3] - text_box[1]
-    left = max(0, (watermarked_source.width - text_width) // 2)
-    top = max(0, (watermarked_source.height - text_height) // 2)
-    text_position = (left, top - text_box[1])
-    shadow_offset = max(2, font_size // 28)
-    draw.text(
-        (text_position[0] + shadow_offset, text_position[1] + shadow_offset),
-        WATERMARK_TEXT,
-        font=font,
-        fill=(0, 0, 0, WATERMARK_SHADOW_ALPHA),
-    )
-    draw.text(
-        text_position,
-        WATERMARK_TEXT,
-        font=font,
-        fill=(255, 255, 255, WATERMARK_ALPHA),
-    )
+    left = max(0, (watermarked_source.width - logo.width) // 2)
+    top = max(0, (watermarked_source.height - logo.height) // 2)
+    overlay.alpha_composite(logo, (left, top))
 
     return Image.alpha_composite(watermarked_source, overlay)
 

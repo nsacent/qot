@@ -8,7 +8,7 @@ from django.utils import timezone
 
 from apps.notifications.services import create_message_notification
 
-from .models import ChatBlock, ChatMessage, ChatThread
+from .models import ChatBlock, ChatMessage, ChatThread, ChatThreadParticipantState
 from .presence import connect_user, disconnect_user, refresh_user
 
 
@@ -293,6 +293,16 @@ class ChatConsumer(ChatPresenceMixin, AsyncWebsocketConsumer):
             )
         )
 
+    async def chat_message_deleted(self, event):
+        await self.send(
+            text_data=json.dumps(
+                {
+                    "type": "message_deleted",
+                    "message_id": event["message_id"],
+                }
+            )
+        )
+
     async def typing_status(self, event):
         await self.send(
             text_data=json.dumps(
@@ -350,6 +360,16 @@ class ChatConsumer(ChatPresenceMixin, AsyncWebsocketConsumer):
             sender=self.user,
             message_type=ChatMessage.TYPE_TEXT,
             body=body,
+        )
+
+        ChatThreadParticipantState.objects.filter(
+            thread=thread,
+            user=other_user,
+            is_deleted=True,
+        ).update(
+            is_deleted=False,
+            is_archived=False,
+            is_spam=False,
         )
 
         thread.last_message = body

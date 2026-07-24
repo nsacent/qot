@@ -38,7 +38,7 @@ from apps.common.permissions import IsNotBanned, IsVerifiedUser
 
 from rest_framework.parsers import MultiPartParser, FormParser
 
-from .realtime import broadcast_chat_message
+from .realtime import broadcast_chat_message, broadcast_chat_message_deleted
 from .socket_auth import create_chat_socket_ticket
 
 
@@ -102,7 +102,13 @@ def chat_threads_for_user(user):
                 Value(False),
                 output_field=BooleanField(),
             ),
+            user_is_deleted=Coalesce(
+                Subquery(participant_state.values("is_deleted")[:1]),
+                Value(False),
+                output_field=BooleanField(),
+            ),
         )
+        .filter(user_is_deleted=False)
         .order_by("-last_message_at", "-created_at")
     )
 
@@ -206,6 +212,17 @@ def deliver_chat_message(thread, message, preview=None):
         is_marked_unread=True,
     ).update(is_marked_unread=False)
 
+    other_user = get_other_chat_participant(thread, message.sender)
+    ChatThreadParticipantState.objects.filter(
+        thread=thread,
+        user=other_user,
+        is_deleted=True,
+    ).update(
+        is_deleted=False,
+        is_archived=False,
+        is_spam=False,
+    )
+
     create_message_notification(thread, message)
 
 
@@ -298,6 +315,12 @@ class ChatThreadListCreateAPIView(generics.ListCreateAPIView):
             },
         )
 
+        ChatThreadParticipantState.objects.update_or_create(
+            thread=thread,
+            user=request.user,
+            defaults={"is_deleted": False},
+        )
+
         initial_message = serializer.validated_data.get("initial_message", "")
         created_message = None
 
@@ -335,7 +358,7 @@ class ChatThreadListCreateAPIView(generics.ListCreateAPIView):
         )
 
 
-class ChatThreadDetailAPIView(generics.RetrieveAPIView):
+class ChatThreadDetailAPIView(generics.RetrieveDestroyAPIView):
     serializer_class = ChatThreadSerializer
     permission_classes = [
         permissions.IsAuthenticated,
@@ -344,6 +367,33 @@ class ChatThreadDetailAPIView(generics.RetrieveAPIView):
 
     def get_queryset(self):
         return chat_threads_for_user(self.request.user)
+
+    @transaction.atomic
+    def perform_destroy(self, instance):
+        state, _ = ChatThreadParticipantState.objects.select_for_update().get_or_create(
+            thread=instance,
+            user=self.request.user,
+        )
+        state.is_deleted = True
+        state.is_favourite = False
+        state.is_archived = False
+        state.is_spam = False
+        state.is_marked_unread = False
+        state.save(update_fields=[
+            "is_deleted",
+            "is_favourite",
+            "is_archived",
+            "is_spam",
+            "is_marked_unread",
+            "updated_at",
+        ])
+
+        if self.request.user.id == instance.buyer_id:
+            instance.buyer_unread_count = 0
+            instance.save(update_fields=["buyer_unread_count"])
+        else:
+            instance.seller_unread_count = 0
+            instance.save(update_fields=["seller_unread_count"])
 
 
 class ChatSocketTicketAPIView(APIView):
@@ -466,8 +516,8 @@ class ChatMessageListCreateAPIView(generics.ListCreateAPIView):
         return (
             ChatMessage.objects
             .filter(thread=thread)
-            .select_related("sender")
-            .prefetch_related("attachments")
+            .select_related("sender", "reply_to", "reply_to__sender")
+            .prefetch_related("attachments", "reply_to__attachments")
             .order_by("created_at")
         )
 
@@ -506,7 +556,10 @@ class ChatMessageListCreateAPIView(generics.ListCreateAPIView):
                 status=status.HTTP_403_FORBIDDEN,
             )
 
-        serializer = self.get_serializer(data=request.data)
+        serializer = self.get_serializer(
+            data=request.data,
+            context={**self.get_serializer_context(), "thread": thread},
+        )
         serializer.is_valid(raise_exception=True)
 
         message = serializer.save(
@@ -530,6 +583,81 @@ class ChatMessageListCreateAPIView(generics.ListCreateAPIView):
             message_data,
             status=status.HTTP_201_CREATED,
         )
+
+
+class ChatMessageDetailAPIView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    @transaction.atomic
+    def delete(self, request, thread_id, message_id):
+        try:
+            thread = ChatThread.objects.select_for_update().get(
+                pk=thread_id,
+                is_active=True,
+            )
+        except ChatThread.DoesNotExist:
+            return Response(
+                {"detail": "Chat thread not found."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        if request.user.id not in {thread.buyer_id, thread.seller_id}:
+            return Response(
+                {"detail": "You are not part of this chat thread."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        try:
+            message = (
+                ChatMessage.objects
+                .select_for_update()
+                .prefetch_related("attachments")
+                .get(pk=message_id, thread=thread)
+            )
+        except ChatMessage.DoesNotExist:
+            return Response(
+                {"detail": "Message not found."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        if message.sender_id != request.user.id:
+            return Response(
+                {"detail": "You can only delete messages you sent."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        was_unread = not message.is_read
+        was_last_message = thread.last_message_at == message.created_at
+        for attachment in message.attachments.all():
+            if attachment.file:
+                attachment.file.delete(save=False)
+        if message.image:
+            message.image.delete(save=False)
+        message.delete()
+
+        update_fields = []
+        if was_unread and request.user.id == thread.buyer_id:
+            thread.seller_unread_count = max(0, thread.seller_unread_count - 1)
+            update_fields.append("seller_unread_count")
+        elif was_unread:
+            thread.buyer_unread_count = max(0, thread.buyer_unread_count - 1)
+            update_fields.append("buyer_unread_count")
+
+        if was_last_message:
+            latest = thread.messages.order_by("-created_at").prefetch_related("attachments").first()
+            if latest:
+                thread.last_message = latest.body or "[Attachment]"
+                thread.last_message_at = latest.created_at
+            else:
+                thread.last_message = ""
+                thread.last_message_at = None
+            update_fields.extend(["last_message", "last_message_at"])
+
+        if update_fields:
+            thread.save(update_fields=list(dict.fromkeys(update_fields)))
+
+        broadcast_chat_message_deleted(thread, message_id)
+        return Response(status=status.HTTP_204_NO_CONTENT)
 
 
 class ChatMarkReadAPIView(APIView):
@@ -666,6 +794,19 @@ class ChatAttachmentUploadAPIView(APIView):
             )
 
         message_text = str(request.data.get("message", "")).strip()
+        reply_to = None
+        reply_to_id = request.data.get("reply_to")
+        if reply_to_id:
+            try:
+                reply_to = ChatMessage.objects.get(
+                    pk=reply_to_id,
+                    thread=thread,
+                )
+            except (ChatMessage.DoesNotExist, TypeError, ValueError):
+                return Response(
+                    {"reply_to": ["The replied message is not in this conversation."]},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
         validated_files = []
 
         for uploaded_file in uploaded_files:
@@ -693,7 +834,8 @@ class ChatAttachmentUploadAPIView(APIView):
             sender=request.user,
             body=message_text,
             message_type=message_type,
-)
+            reply_to=reply_to,
+        )
 
         for uploaded_file, file_type in zip(validated_files, file_types):
             ChatMessageAttachment.objects.create(

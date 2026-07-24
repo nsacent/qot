@@ -23,10 +23,20 @@ from .models import (
     ListingImage,
     PendingListingImage,
 )
-from .watermarks import apply_qot_watermark
+from .serializers import ListingCreateUpdateSerializer
+from .watermarks import WATERMARK_ALPHA, _qot_logo_mask, apply_qot_watermark
 
 
 class ListingWatermarkTests(APITestCase):
+    def test_watermark_uses_the_qot_logo_geometry(self):
+        logo = _qot_logo_mask(240)
+
+        self.assertGreater(logo.getpixel((40, 13)), 0)
+        self.assertEqual(logo.getpixel((40, 42)), 0)
+        self.assertGreater(logo.getpixel((124, 13)), 0)
+        self.assertEqual(logo.getpixel((124, 42)), 0)
+        self.assertGreater(logo.getpixel((190, 30)), 0)
+
     def test_watermark_remains_visible_on_light_and_dark_photos(self):
         for colour in ((245, 245, 245), (20, 20, 20)):
             source = Image.new("RGB", (800, 600), color=colour)
@@ -34,13 +44,18 @@ class ListingWatermarkTests(APITestCase):
             difference = ImageChops.difference(source, watermarked)
 
             self.assertIsNotNone(difference.getbbox())
-            self.assertGreater(max(channel[1] for channel in difference.getextrema()), 80)
+            maximum_difference = max(channel[1] for channel in difference.getextrema())
+            self.assertGreater(maximum_difference, 1)
+            self.assertLessEqual(maximum_difference, WATERMARK_ALPHA)
 
     def test_watermark_is_visible_on_transparent_product_photos(self):
         source = Image.new("RGBA", (800, 600), color=(0, 0, 0, 0))
         watermarked = apply_qot_watermark(source)
 
-        self.assertGreater(watermarked.getchannel("A").getextrema()[1], 100)
+        self.assertEqual(
+            watermarked.getchannel("A").getextrema()[1],
+            WATERMARK_ALPHA,
+        )
 
 
 class ListingLifecycleTests(APITestCase):
@@ -110,6 +125,25 @@ class ListingLifecycleTests(APITestCase):
             image_bytes.getvalue(),
             content_type="image/png",
         )
+
+    def test_ad_title_and_description_have_minimum_lengths(self):
+        serializer = ListingCreateUpdateSerializer(
+            data={
+                "category": self.category.id,
+                "city": self.city.id,
+                "title": "Too short",
+                "description": "This description is too short",
+                "price": "100000",
+                "currency": "UGX",
+                "condition": Listing.CONDITION_USED,
+            }
+        )
+
+        self.assertFalse(serializer.is_valid())
+        self.assertIn("title", serializer.errors)
+        self.assertIn("description", serializer.errors)
+        self.assertIn("at least 10 characters", str(serializer.errors["title"][0]))
+        self.assertIn("at least 30 characters", str(serializer.errors["description"][0]))
 
     def test_mine_filter_requires_authentication(self):
         self.create_listing()
@@ -629,7 +663,7 @@ class ListingLifecycleTests(APITestCase):
         with Image.open(listing_image.image) as refreshed_image:
             source = Image.new("RGB", refreshed_image.size, color=(245, 245, 245))
             difference = ImageChops.difference(source, refreshed_image.convert("RGB"))
-            self.assertGreater(max(channel[1] for channel in difference.getextrema()), 80)
+            self.assertGreater(max(channel[1] for channel in difference.getextrema()), 10)
 
     def test_existing_ad_upload_rejects_photo_from_another_ad(self):
         source_listing = self.create_listing()

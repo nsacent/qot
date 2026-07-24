@@ -1,4 +1,5 @@
 from django.conf import settings
+from django.core.validators import MinLengthValidator
 from django.db import models
 from django.utils import timezone
 
@@ -50,10 +51,25 @@ class Listing(models.Model):
         related_name="listings",
     )
 
-    title = models.CharField(max_length=180)
+    title = models.CharField(
+        max_length=180,
+        validators=[
+            MinLengthValidator(
+                10,
+                "Ad title must be at least 10 characters.",
+            ),
+        ],
+    )
     slug = models.SlugField(max_length=220, db_index=True)
 
-    description = models.TextField()
+    description = models.TextField(
+        validators=[
+            MinLengthValidator(
+                30,
+                "Ad description must be at least 30 characters.",
+            ),
+        ],
+    )
 
     price = models.DecimalField(max_digits=14, decimal_places=2)
     currency = models.CharField(max_length=10, default="UGX")

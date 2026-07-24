@@ -44,6 +44,7 @@ class ChatMessageSerializer(serializers.ModelSerializer):
     sender_name = serializers.CharField(source="sender.full_name", read_only=True)
     sender_phone = serializers.CharField(source="sender.phone", read_only=True)
     attachments = ChatMessageAttachmentSerializer(many=True, read_only=True)
+    reply_to_message = serializers.SerializerMethodField()
 
     class Meta:
         model = ChatMessage
@@ -57,6 +58,8 @@ class ChatMessageSerializer(serializers.ModelSerializer):
             "body",
             "image",
             "attachments",
+            "reply_to",
+            "reply_to_message",
             "is_read",
             "read_at",
             "created_at",
@@ -65,10 +68,33 @@ class ChatMessageSerializer(serializers.ModelSerializer):
             "id",
             "thread",
             "sender",
+            "reply_to_message",
             "is_read",
             "read_at",
             "created_at",
         ]
+
+    def get_reply_to_message(self, obj):
+        replied_message = obj.reply_to
+
+        if not replied_message:
+            return None
+
+        body = str(replied_message.body or "").strip()
+        if not body:
+            first_attachment = replied_message.attachments.first()
+            body = (
+                first_attachment.original_name
+                if first_attachment
+                else "Attachment"
+            )
+
+        return {
+            "id": replied_message.id,
+            "sender": replied_message.sender_id,
+            "sender_name": replied_message.sender.full_name,
+            "body": body[:180],
+        }
 
 
 class ChatThreadSerializer(serializers.ModelSerializer):
@@ -258,18 +284,26 @@ class ChatThreadStateUpdateSerializer(serializers.Serializer):
 
 
 class ChatMessageCreateSerializer(serializers.ModelSerializer):
+    reply_to = serializers.PrimaryKeyRelatedField(
+        queryset=ChatMessage.objects.all(),
+        required=False,
+        allow_null=True,
+    )
+
     class Meta:
         model = ChatMessage
         fields = [
             "message_type",
             "body",
             "image",
+            "reply_to",
         ]
 
     def validate(self, attrs):
         message_type = attrs.get("message_type", ChatMessage.TYPE_TEXT)
         body = attrs.get("body")
         image = attrs.get("image")
+        reply_to = attrs.get("reply_to")
 
         if message_type == ChatMessage.TYPE_TEXT and not body:
             raise serializers.ValidationError(
@@ -279,6 +313,12 @@ class ChatMessageCreateSerializer(serializers.ModelSerializer):
         if message_type == ChatMessage.TYPE_IMAGE and not image:
             raise serializers.ValidationError(
                 {"image": "Image is required for image messages."}
+            )
+
+        thread = self.context.get("thread")
+        if reply_to and thread and reply_to.thread_id != thread.id:
+            raise serializers.ValidationError(
+                {"reply_to": "The replied message is not in this conversation."}
             )
 
         return attrs

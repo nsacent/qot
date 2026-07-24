@@ -61,6 +61,7 @@ class ChatThreadParticipantState(models.Model):
     is_archived = models.BooleanField(default=False)
     is_spam = models.BooleanField(default=False)
     is_marked_unread = models.BooleanField(default=False)
+    is_deleted = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -119,6 +120,14 @@ class ChatMessage(models.Model):
         upload_to="chats/images/",
         null=True,
         blank=True,
+    )
+
+    reply_to = models.ForeignKey(
+        "self",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="replies",
     )
 
     is_read = models.BooleanField(default=False)

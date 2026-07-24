@@ -38,3 +38,35 @@ def broadcast_chat_message(thread, message_payload):
                 "thread": update,
             },
         )
+
+
+def broadcast_chat_message_deleted(thread, message_id):
+    channel_layer = get_channel_layer()
+
+    if channel_layer is None:
+        return
+
+    async_to_sync(channel_layer.group_send)(
+        f"chat_thread_{thread.id}",
+        {
+            "type": "chat_message_deleted",
+            "message_id": message_id,
+        },
+    )
+
+    update = {
+        "thread_id": thread.id,
+        "last_message": thread.last_message or "",
+        "last_message_at": (
+            thread.last_message_at.isoformat() if thread.last_message_at else None
+        ),
+    }
+
+    for user_id in {thread.buyer_id, thread.seller_id}:
+        async_to_sync(channel_layer.group_send)(
+            f"chat_user_{user_id}",
+            {
+                "type": "thread_updated",
+                "thread": update,
+            },
+        )

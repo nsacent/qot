@@ -342,6 +342,129 @@ class ChatDeliveryTests(APITestCase):
         self.assertEqual(mark_read.status_code, status.HTTP_200_OK)
         self.assertFalse(state.is_marked_unread)
 
+    def test_deleting_a_thread_only_removes_it_for_that_participant(self):
+        thread = ChatThread.objects.create(
+            listing=self.listing,
+            buyer=self.buyer,
+            seller=self.seller,
+        )
+
+        response = self.client.delete(f"/api/v1/chats/threads/{thread.id}/")
+        buyer_threads = self.client.get("/api/v1/chats/threads/")
+
+        self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
+        self.assertEqual(buyer_threads.data["results"], [])
+        self.assertTrue(
+            ChatThreadParticipantState.objects.get(
+                thread=thread,
+                user=self.buyer,
+            ).is_deleted
+        )
+
+        self.client.force_authenticate(self.seller)
+        seller_threads = self.client.get("/api/v1/chats/threads/")
+        self.assertEqual(seller_threads.data["results"][0]["id"], thread.id)
+
+    @patch("apps.chats.views.broadcast_chat_message_deleted")
+    def test_sender_can_delete_one_message_but_recipient_cannot(self, broadcast_mock):
+        thread = ChatThread.objects.create(
+            listing=self.listing,
+            buyer=self.buyer,
+            seller=self.seller,
+            last_message="Please keep this one.",
+        )
+        first_message = ChatMessage.objects.create(
+            thread=thread,
+            sender=self.buyer,
+            body="An earlier message.",
+        )
+        protected_message = ChatMessage.objects.create(
+            thread=thread,
+            sender=self.seller,
+            body="Please keep this one.",
+        )
+        thread.last_message_at = protected_message.created_at
+        thread.save(update_fields=["last_message_at"])
+
+        denied = self.client.delete(
+            f"/api/v1/chats/threads/{thread.id}/messages/{protected_message.id}/"
+        )
+        deleted = self.client.delete(
+            f"/api/v1/chats/threads/{thread.id}/messages/{first_message.id}/"
+        )
+
+        self.assertEqual(denied.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertEqual(deleted.status_code, status.HTTP_204_NO_CONTENT)
+        self.assertFalse(ChatMessage.objects.filter(pk=first_message.id).exists())
+        self.assertTrue(ChatMessage.objects.filter(pk=protected_message.id).exists())
+        broadcast_mock.assert_called_once_with(thread, first_message.id)
+
+    @patch("apps.chats.views.broadcast_chat_message")
+    @patch("apps.chats.views.create_message_notification")
+    def test_message_can_reply_to_an_existing_message(
+        self,
+        notification_mock,
+        broadcast_mock,
+    ):
+        thread = ChatThread.objects.create(
+            listing=self.listing,
+            buyer=self.buyer,
+            seller=self.seller,
+        )
+        original = ChatMessage.objects.create(
+            thread=thread,
+            sender=self.seller,
+            body="The item is still available.",
+        )
+
+        response = self.client.post(
+            f"/api/v1/chats/threads/{thread.id}/messages/",
+            {
+                "body": "Great, I would like to buy it.",
+                "reply_to": original.id,
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data["reply_to"], original.id)
+        self.assertEqual(response.data["reply_to_message"]["id"], original.id)
+        self.assertEqual(
+            response.data["reply_to_message"]["body"],
+            original.body,
+        )
+        self.assertEqual(ChatMessage.objects.get(pk=response.data["id"]).reply_to, original)
+        notification_mock.assert_called_once()
+        broadcast_mock.assert_called_once()
+
+    @patch("apps.chats.views.broadcast_chat_message")
+    @patch("apps.chats.views.create_message_notification")
+    def test_new_message_restores_a_deleted_thread_for_recipient(
+        self,
+        notification_mock,
+        broadcast_mock,
+    ):
+        thread = ChatThread.objects.create(
+            listing=self.listing,
+            buyer=self.buyer,
+            seller=self.seller,
+        )
+        ChatThreadParticipantState.objects.create(
+            thread=thread,
+            user=self.seller,
+            is_deleted=True,
+        )
+
+        response = self.client.post(
+            f"/api/v1/chats/threads/{thread.id}/messages/",
+            {"body": "This brings the conversation back."},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        state = ChatThreadParticipantState.objects.get(thread=thread, user=self.seller)
+        self.assertFalse(state.is_deleted)
+
     def test_authenticated_verified_user_can_request_short_lived_socket_ticket(self):
         response = self.client.get("/api/v1/chats/socket-ticket/")
 

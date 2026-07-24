@@ -4,6 +4,7 @@ from .views import (
     ChatThreadListCreateAPIView,
     ChatThreadDetailAPIView,
     ChatMessageListCreateAPIView,
+    ChatMessageDetailAPIView,
     ChatMarkReadAPIView,
     ChatAttachmentUploadAPIView,
     ChatAttachmentDownloadAPIView,
@@ -31,6 +32,11 @@ urlpatterns = [
         "threads/<int:thread_id>/messages/",
         ChatMessageListCreateAPIView.as_view(),
         name="message_list_create",
+    ),
+    path(
+        "threads/<int:thread_id>/messages/<int:message_id>/",
+        ChatMessageDetailAPIView.as_view(),
+        name="message_detail",
     ),
     path(
         "threads/<int:thread_id>/mark-read/",
