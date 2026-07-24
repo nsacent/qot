@@ -34,7 +34,7 @@ class ListingWatermarkTests(APITestCase):
             difference = ImageChops.difference(source, watermarked)
 
             self.assertIsNotNone(difference.getbbox())
-            self.assertGreater(max(channel[1] for channel in difference.getextrema()), 40)
+            self.assertGreater(max(channel[1] for channel in difference.getextrema()), 80)
 
 
 class ListingLifecycleTests(APITestCase):
@@ -623,7 +623,7 @@ class ListingLifecycleTests(APITestCase):
         with Image.open(listing_image.image) as refreshed_image:
             source = Image.new("RGB", refreshed_image.size, color=(245, 245, 245))
             difference = ImageChops.difference(source, refreshed_image.convert("RGB"))
-            self.assertGreater(max(channel[1] for channel in difference.getextrema()), 40)
+            self.assertGreater(max(channel[1] for channel in difference.getextrema()), 80)
 
     def test_existing_ad_upload_rejects_photo_from_another_ad(self):
         source_listing = self.create_listing()

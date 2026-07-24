@@ -6,7 +6,7 @@ from PIL import Image, ImageDraw, ImageFont, ImageOps, ImageStat
 
 
 WATERMARK_TEXT = "QOT"
-WATERMARK_ALPHA = 68
+WATERMARK_ALPHA = 112
 
 
 def _watermark_font(size):
@@ -30,7 +30,7 @@ def apply_qot_watermark(image):
     """Return an RGBA image with a subtle, contrast-aware QOT wordmark."""
     watermarked_source = image.convert("RGBA")
     shortest_side = max(1, min(watermarked_source.size))
-    font_size = max(18, int(shortest_side * 0.10))
+    font_size = max(20, int(shortest_side * 0.13))
     font = _watermark_font(font_size)
     overlay = Image.new("RGBA", watermarked_source.size, (0, 0, 0, 0))
     draw = ImageDraw.Draw(overlay)
