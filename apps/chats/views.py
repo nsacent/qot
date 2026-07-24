@@ -139,6 +139,39 @@ def filter_chat_folder(queryset, folder):
     return visible
 
 
+def search_chat_threads(queryset, user, search):
+    terms = [term for term in str(search or "").strip().split() if term][:8]
+
+    for term in terms:
+        phone_term = ""
+        digits = "".join(character for character in term if character.isdigit())
+        if digits.startswith("0") and len(digits) >= 3:
+            phone_term = f"256{digits[1:]}"
+
+        matches = (
+            Q(listing__title__icontains=term)
+            | Q(listing__slug__icontains=term)
+            | Q(messages__body__icontains=term)
+            | Q(messages__attachments__original_name__icontains=term)
+            | Q(buyer=user, seller__full_name__icontains=term)
+            | Q(buyer=user, seller__phone__icontains=term)
+            | Q(buyer=user, seller__email__icontains=term)
+            | Q(seller=user, buyer__full_name__icontains=term)
+            | Q(seller=user, buyer__phone__icontains=term)
+            | Q(seller=user, buyer__email__icontains=term)
+        )
+
+        if phone_term:
+            matches |= (
+                Q(buyer=user, seller__phone__icontains=phone_term)
+                | Q(seller=user, buyer__phone__icontains=phone_term)
+            )
+
+        queryset = queryset.filter(matches)
+
+    return queryset.distinct()
+
+
 def get_other_chat_participant(thread, user):
     if thread.buyer_id == user.id:
         return thread.seller
@@ -199,9 +232,14 @@ class ChatThreadListCreateAPIView(generics.ListCreateAPIView):
         if folder not in CHAT_FOLDER_NAMES:
             folder = "all"
 
-        return filter_chat_folder(
+        queryset = filter_chat_folder(
             chat_threads_for_user(self.request.user),
             folder,
+        )
+        return search_chat_threads(
+            queryset,
+            self.request.user,
+            self.request.query_params.get("search", ""),
         )
 
     def list(self, request, *args, **kwargs):

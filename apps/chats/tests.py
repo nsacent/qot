@@ -213,6 +213,32 @@ class ChatDeliveryTests(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertEqual(ChatMessage.objects.count(), 0)
 
+    def test_conversation_search_finds_message_ad_seller_and_local_phone(self):
+        thread = ChatThread.objects.create(
+            listing=self.listing,
+            buyer=self.buyer,
+            seller=self.seller,
+        )
+        ChatMessage.objects.create(
+            thread=thread,
+            sender=self.seller,
+            body="The unique serial is KAMPALA-7788.",
+        )
+
+        for search in (
+            "KAMPALA-7788",
+            "Chat test advert",
+            "Chat Seller",
+            "0700008002",
+        ):
+            response = self.client.get(
+                "/api/v1/chats/threads/",
+                {"search": search},
+            )
+            self.assertEqual(response.status_code, status.HTTP_200_OK)
+            self.assertEqual(response.data["count"], 1)
+            self.assertEqual(response.data["results"][0]["id"], thread.id)
+
     def test_chat_folders_and_settings_are_private_to_each_participant(self):
         thread = ChatThread.objects.create(
             listing=self.listing,
