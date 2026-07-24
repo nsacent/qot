@@ -9,7 +9,10 @@ from .models import (
     ChatMessageAttachment,
     ChatBlock,
     ChatReport,
+    ChatThreadParticipantState,
 )
+from .presence import is_user_online
+
 
 class ChatMessageAttachmentSerializer(serializers.ModelSerializer):
     file_url = serializers.SerializerMethodField()
@@ -74,12 +77,16 @@ class ChatThreadSerializer(serializers.ModelSerializer):
     listing = ListingListSerializer(read_only=True)
     buyer_name = serializers.CharField(source="buyer.full_name", read_only=True)
     seller_name = serializers.CharField(source="seller.full_name", read_only=True)
-    unread_count = serializers.SerializerMethodField()
-
+    other_user_id = serializers.SerializerMethodField()
     other_user_name = serializers.SerializerMethodField()
     other_user_phone = serializers.SerializerMethodField()
     other_user_avatar = serializers.SerializerMethodField()
+    other_user_online = serializers.SerializerMethodField()
     unread_count = serializers.SerializerMethodField()
+    is_favourite = serializers.SerializerMethodField()
+    is_archived = serializers.SerializerMethodField()
+    is_spam = serializers.SerializerMethodField()
+    is_marked_unread = serializers.SerializerMethodField()
 
     class Meta:
         model = ChatThread
@@ -90,48 +97,75 @@ class ChatThreadSerializer(serializers.ModelSerializer):
             "buyer_name",
             "seller",
             "seller_name",
-            "unread_count",
+            "other_user_id",
             "other_user_name",
             "other_user_phone",
             "other_user_avatar",
+            "other_user_online",
             "last_message",
             "last_message_at",
             "buyer_unread_count",
             "seller_unread_count",
             "unread_count",
+            "is_favourite",
+            "is_archived",
+            "is_spam",
+            "is_marked_unread",
             "is_active",
             "created_at",
         ]
 
-    def get_other_user_name(self, obj):
+    def _other_user(self, obj):
         request = self.context.get("request")
 
-        if not request:
+        if not request or not request.user.is_authenticated:
             return None
 
-        if request.user == obj.buyer:
-            return obj.seller.full_name
+        return obj.seller if request.user == obj.buyer else obj.buyer
 
-        return obj.buyer.full_name
+    def _participant_state(self, obj):
+        request = self.context.get("request")
+
+        if not request or not request.user.is_authenticated:
+            return None
+
+        cache = getattr(self, "_participant_state_cache", {})
+
+        if obj.pk not in cache:
+            cache[obj.pk] = ChatThreadParticipantState.objects.filter(
+                thread=obj,
+                user=request.user,
+            ).first()
+            self._participant_state_cache = cache
+
+        return cache[obj.pk]
+
+    def _state_value(self, obj, annotation, field):
+        if hasattr(obj, annotation):
+            return bool(getattr(obj, annotation))
+
+        state = self._participant_state(obj)
+        return bool(state and getattr(state, field))
+
+    def get_other_user_id(self, obj):
+        user = self._other_user(obj)
+        return user.id if user else None
+
+    def get_other_user_name(self, obj):
+        user = self._other_user(obj)
+        return user.full_name if user else None
 
     def get_other_user_phone(self, obj):
-        request = self.context.get("request")
-
-        if not request:
-            return None
-
-        if request.user == obj.buyer:
-            return obj.seller.phone
-
-        return obj.buyer.phone
+        user = self._other_user(obj)
+        return user.phone if user else None
 
     def get_other_user_avatar(self, obj):
         request = self.context.get("request")
+        other_user = self._other_user(obj)
 
-        if not request:
+        if not request or not other_user:
             return None
 
-        other_user = obj.seller if request.user == obj.buyer else obj.buyer
         profile = getattr(other_user, "profile", None)
 
         if not profile or not profile.avatar:
@@ -139,17 +173,6 @@ class ChatThreadSerializer(serializers.ModelSerializer):
 
         return request.build_absolute_uri(profile.avatar.url)
 
-    def get_unread_count(self, obj):
-        request = self.context.get("request")
-
-        if not request:
-            return 0
-
-        if request.user == obj.buyer:
-            return obj.buyer_unread_count
-
-        return obj.seller_unread_count
-    
     def get_unread_count(self, obj):
         if hasattr(obj, "unread_count_value"):
             return obj.unread_count_value
@@ -159,11 +182,26 @@ class ChatThreadSerializer(serializers.ModelSerializer):
         if not request or not request.user.is_authenticated:
             return 0
 
-        return obj.messages.filter(
-            is_read=False,
-        ).exclude(
-            sender=request.user,
-        ).count()
+        if request.user == obj.buyer:
+            return obj.buyer_unread_count
+
+        return obj.seller_unread_count
+
+    def get_other_user_online(self, obj):
+        user = self._other_user(obj)
+        return is_user_online(user.id) if user else False
+
+    def get_is_favourite(self, obj):
+        return self._state_value(obj, "user_is_favourite", "is_favourite")
+
+    def get_is_archived(self, obj):
+        return self._state_value(obj, "user_is_archived", "is_archived")
+
+    def get_is_spam(self, obj):
+        return self._state_value(obj, "user_is_spam", "is_spam")
+
+    def get_is_marked_unread(self, obj):
+        return self._state_value(obj, "user_marked_unread", "is_marked_unread")
 
 
 class ChatThreadCreateSerializer(serializers.Serializer):
@@ -194,6 +232,21 @@ class ChatThreadCreateSerializer(serializers.Serializer):
         self.context["listing"] = listing
 
         return value
+
+
+class ChatThreadStateUpdateSerializer(serializers.Serializer):
+    is_favourite = serializers.BooleanField(required=False)
+    is_archived = serializers.BooleanField(required=False)
+    is_spam = serializers.BooleanField(required=False)
+    is_marked_unread = serializers.BooleanField(required=False)
+
+    def validate(self, attrs):
+        if not attrs:
+            raise serializers.ValidationError(
+                "Choose at least one chat setting to update."
+            )
+
+        return attrs
 
 
 class ChatMessageCreateSerializer(serializers.ModelSerializer):

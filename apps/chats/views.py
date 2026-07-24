@@ -1,5 +1,6 @@
 from django.db import transaction
-from django.db.models import Q, Count
+from django.db.models import BooleanField, Count, OuterRef, Q, Subquery, Value
+from django.db.models.functions import Coalesce
 from django.utils import timezone
 
 from rest_framework import generics, permissions, status
@@ -12,6 +13,7 @@ from .models import (
     ChatMessageAttachment,
     ChatBlock,
     ChatReport,
+    ChatThreadParticipantState,
 )
 
 from .permissions import IsThreadParticipant
@@ -26,6 +28,7 @@ from .serializers import (
     ChatBlockSerializer,
     ChatReportCreateSerializer,
     ChatReportSerializer,
+    ChatThreadStateUpdateSerializer,
 )
 
 from apps.notifications.services import create_message_notification
@@ -33,6 +36,107 @@ from apps.notifications.services import create_message_notification
 from apps.common.permissions import IsNotBanned, IsVerifiedUser
 
 from rest_framework.parsers import MultiPartParser, FormParser
+
+from .realtime import broadcast_chat_message
+from .socket_auth import create_chat_socket_ticket
+
+
+CHAT_FOLDER_NAMES = {
+    "all",
+    "read",
+    "unread",
+    "favourites",
+    "archived",
+    "spam",
+}
+
+
+def chat_threads_for_user(user):
+    participant_state = ChatThreadParticipantState.objects.filter(
+        thread_id=OuterRef("pk"),
+        user=user,
+    )
+
+    return (
+        ChatThread.objects.filter(
+            Q(buyer=user) | Q(seller=user),
+            is_active=True,
+        )
+        .select_related(
+            "listing",
+            "listing__seller",
+            "listing__category",
+            "listing__city",
+            "buyer",
+            "buyer__profile",
+            "seller",
+            "seller__profile",
+        )
+        .prefetch_related("listing__images")
+        .annotate(
+            unread_count_value=Count(
+                "messages",
+                filter=(
+                    Q(messages__is_read=False)
+                    & ~Q(messages__sender=user)
+                ),
+            ),
+            user_is_favourite=Coalesce(
+                Subquery(participant_state.values("is_favourite")[:1]),
+                Value(False),
+                output_field=BooleanField(),
+            ),
+            user_is_archived=Coalesce(
+                Subquery(participant_state.values("is_archived")[:1]),
+                Value(False),
+                output_field=BooleanField(),
+            ),
+            user_is_spam=Coalesce(
+                Subquery(participant_state.values("is_spam")[:1]),
+                Value(False),
+                output_field=BooleanField(),
+            ),
+            user_marked_unread=Coalesce(
+                Subquery(participant_state.values("is_marked_unread")[:1]),
+                Value(False),
+                output_field=BooleanField(),
+            ),
+        )
+        .order_by("-last_message_at", "-created_at")
+    )
+
+
+def filter_chat_folder(queryset, folder):
+    visible = queryset.filter(user_is_archived=False, user_is_spam=False)
+
+    if folder == "unread":
+        return visible.filter(
+            Q(unread_count_value__gt=0) | Q(user_marked_unread=True)
+        )
+
+    if folder == "read":
+        return visible.filter(
+            unread_count_value=0,
+            user_marked_unread=False,
+        )
+
+    if folder == "favourites":
+        return queryset.filter(
+            user_is_favourite=True,
+            user_is_spam=False,
+        )
+
+    if folder == "archived":
+        return queryset.filter(
+            user_is_archived=True,
+            user_is_spam=False,
+        )
+
+    if folder == "spam":
+        return queryset.filter(user_is_spam=True)
+
+    return visible
+
 
 def get_other_chat_participant(thread, user):
     if thread.buyer_id == user.id:
@@ -62,6 +166,12 @@ def deliver_chat_message(thread, message, preview=None):
         ]
     )
 
+    ChatThreadParticipantState.objects.filter(
+        thread=thread,
+        user=message.sender,
+        is_marked_unread=True,
+    ).update(is_marked_unread=False)
+
     create_message_notification(thread, message)
 
 
@@ -83,35 +193,52 @@ class ChatThreadListCreateAPIView(generics.ListCreateAPIView):
         return ChatThreadSerializer
 
     def get_queryset(self):
-        return (
-            ChatThread.objects
-            .filter(
-                Q(buyer=self.request.user) | Q(seller=self.request.user),
-                is_active=True,
-            )
-            .select_related(
-                "listing",
-                "listing__seller",
-                "listing__category",
-                "listing__city",
-                "buyer",
-                "buyer__profile",
-                "seller",
-                "seller__profile",
-            )
-            .prefetch_related("listing__images")
-            .annotate(
-                unread_count_value=Count(
-                    "messages",
-                    filter=(
-                        Q(messages__is_read=False)
-                        & ~Q(messages__sender=self.request.user)
-                    ),
-                )
-            )
-            .order_by("-last_message_at", "-created_at")
+        folder = self.request.query_params.get("filter", "all").lower()
+
+        if folder not in CHAT_FOLDER_NAMES:
+            folder = "all"
+
+        return filter_chat_folder(
+            chat_threads_for_user(self.request.user),
+            folder,
         )
-    
+
+    def list(self, request, *args, **kwargs):
+        base_queryset = chat_threads_for_user(request.user)
+        visible_queryset = base_queryset.filter(
+            user_is_archived=False,
+            user_is_spam=False,
+        )
+        tab_counts = {
+            "all": visible_queryset.count(),
+            "unread": visible_queryset.filter(
+                Q(unread_count_value__gt=0) | Q(user_marked_unread=True)
+            ).count(),
+            "read": visible_queryset.filter(
+                unread_count_value=0,
+                user_marked_unread=False,
+            ).count(),
+            "favourites": base_queryset.filter(
+                user_is_favourite=True,
+                user_is_spam=False,
+            ).count(),
+            "archived": base_queryset.filter(
+                user_is_archived=True,
+                user_is_spam=False,
+            ).count(),
+            "spam": base_queryset.filter(user_is_spam=True).count(),
+        }
+        queryset = self.filter_queryset(self.get_queryset())
+        page = self.paginate_queryset(queryset)
+
+        if page is not None:
+            serializer = self.get_serializer(page, many=True)
+            response = self.get_paginated_response(serializer.data)
+            response.data["tabs"] = tab_counts
+            return response
+
+        serializer = self.get_serializer(queryset, many=True)
+        return Response({"results": serializer.data, "tabs": tab_counts})
 
     @transaction.atomic
     def create(self, request, *args, **kwargs):
@@ -144,6 +271,18 @@ class ChatThreadListCreateAPIView(generics.ListCreateAPIView):
             )
             deliver_chat_message(thread, created_message)
 
+        initial_message_data = (
+            ChatMessageSerializer(
+                created_message,
+                context={"request": request},
+            ).data
+            if created_message
+            else None
+        )
+
+        if created_message:
+            broadcast_chat_message(thread, initial_message_data)
+
         return Response(
             {
                 "message": "Chat thread created." if created else "Chat thread already exists.",
@@ -151,14 +290,7 @@ class ChatThreadListCreateAPIView(generics.ListCreateAPIView):
                     thread,
                     context={"request": request},
                 ).data,
-                "initial_message": (
-                    ChatMessageSerializer(
-                        created_message,
-                        context={"request": request},
-                    ).data
-                    if created_message
-                    else None
-                ),
+                "initial_message": initial_message_data,
             },
             status=status.HTTP_201_CREATED if created else status.HTTP_200_OK,
         )
@@ -172,23 +304,88 @@ class ChatThreadDetailAPIView(generics.RetrieveAPIView):
     ]
 
     def get_queryset(self):
-        return (
-            ChatThread.objects
-            .filter(
-                Q(buyer=self.request.user) | Q(seller=self.request.user),
-                is_active=True,
+        return chat_threads_for_user(self.request.user)
+
+
+class ChatSocketTicketAPIView(APIView):
+    permission_classes = [
+        permissions.IsAuthenticated,
+        IsNotBanned,
+        IsVerifiedUser,
+    ]
+
+    def get(self, request):
+        return Response(
+            {
+                "ticket": create_chat_socket_ticket(request.user),
+                "expires_in": 120,
+            },
+            status=status.HTTP_200_OK,
+        )
+
+
+class ChatThreadStateAPIView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    @transaction.atomic
+    def patch(self, request, thread_id):
+        try:
+            thread = (
+                ChatThread.objects.filter(
+                    Q(buyer=request.user) | Q(seller=request.user),
+                    is_active=True,
+                )
+                .select_for_update()
+                .get(pk=thread_id)
             )
-            .select_related(
-                "listing",
-                "listing__seller",
-                "listing__category",
-                "listing__city",
-                "buyer",
-                "buyer__profile",
-                "seller",
-                "seller__profile",
+        except ChatThread.DoesNotExist:
+            return Response(
+                {"detail": "Chat thread not found."},
+                status=status.HTTP_404_NOT_FOUND,
             )
-            .prefetch_related("listing__images")
+
+        serializer = ChatThreadStateUpdateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        state, _ = ChatThreadParticipantState.objects.select_for_update().get_or_create(
+            thread=thread,
+            user=request.user,
+        )
+
+        updated_fields = []
+
+        for field, value in serializer.validated_data.items():
+            setattr(state, field, value)
+            updated_fields.append(field)
+
+        if serializer.validated_data.get("is_spam") is True:
+            state.is_archived = False
+            if "is_archived" not in updated_fields:
+                updated_fields.append("is_archived")
+
+            reported_user = get_other_chat_participant(thread, request.user)
+            ChatReport.objects.get_or_create(
+                thread=thread,
+                reporter=request.user,
+                reported_user=reported_user,
+                reason=ChatReport.REASON_SPAM,
+                is_resolved=False,
+                defaults={
+                    "description": "Conversation moved to spam by the participant.",
+                },
+            )
+
+        state.save(update_fields=[*updated_fields, "updated_at"])
+        refreshed_thread = chat_threads_for_user(request.user).get(pk=thread.pk)
+
+        return Response(
+            {
+                "message": "Chat settings updated.",
+                "thread": ChatThreadSerializer(
+                    refreshed_thread,
+                    context={"request": request},
+                ).data,
+            },
+            status=status.HTTP_200_OK,
         )
 
 
@@ -284,8 +481,14 @@ class ChatMessageListCreateAPIView(generics.ListCreateAPIView):
             preview=message.body or "[Image]",
         )
 
+        message_data = ChatMessageSerializer(
+            message,
+            context={"request": request},
+        ).data
+        broadcast_chat_message(thread, message_data)
+
         return Response(
-            ChatMessageSerializer(message, context={"request": request}).data,
+            message_data,
             status=status.HTTP_201_CREATED,
         )
 
@@ -332,6 +535,12 @@ class ChatMarkReadAPIView(APIView):
         else:
             thread.seller_unread_count = 0
             thread.save(update_fields=["seller_unread_count"])
+
+        ChatThreadParticipantState.objects.filter(
+            thread=thread,
+            user=request.user,
+            is_marked_unread=True,
+        ).update(is_marked_unread=False)
 
         return Response(
             {
@@ -467,13 +676,16 @@ class ChatAttachmentUploadAPIView(APIView):
             preview=message_text or f"[Attachment] {attachment_label}",
         )
 
+        message_data = ChatMessageSerializer(
+            chat_message,
+            context={"request": request},
+        ).data
+        broadcast_chat_message(thread, message_data)
+
         return Response(
             {
                 "message": "Attachment sent successfully.",
-                "chat_message": ChatMessageSerializer(
-                    chat_message,
-                    context={"request": request},
-                ).data,
+                "chat_message": message_data,
             },
             status=status.HTTP_201_CREATED,
         )
@@ -616,6 +828,16 @@ class ChatReportAPIView(APIView):
             reason=serializer.validated_data["reason"],
             description=serializer.validated_data.get("description", ""),
         )
+
+        if serializer.validated_data["reason"] == ChatReport.REASON_SPAM:
+            ChatThreadParticipantState.objects.update_or_create(
+                thread=thread,
+                user=request.user,
+                defaults={
+                    "is_spam": True,
+                    "is_archived": False,
+                },
+            )
 
         return Response(
             {

@@ -46,6 +46,46 @@ class ChatThread(models.Model):
         return f"{self.buyer} ↔ {self.seller} - {self.listing}"
 
 
+class ChatThreadParticipantState(models.Model):
+    thread = models.ForeignKey(
+        ChatThread,
+        on_delete=models.CASCADE,
+        related_name="participant_states",
+    )
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="chat_thread_states",
+    )
+    is_favourite = models.BooleanField(default=False)
+    is_archived = models.BooleanField(default=False)
+    is_spam = models.BooleanField(default=False)
+    is_marked_unread = models.BooleanField(default=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["thread", "user"],
+                name="chats_unique_thread_user_state",
+            ),
+        ]
+        indexes = [
+            models.Index(
+                fields=["user", "is_archived", "is_spam"],
+                name="chats_state_user_folder_idx",
+            ),
+            models.Index(
+                fields=["user", "is_favourite"],
+                name="chats_state_user_fav_idx",
+            ),
+        ]
+
+    def __str__(self):
+        return f"{self.user} settings for chat #{self.thread_id}"
+
+
 class ChatMessage(models.Model):
     TYPE_TEXT = "text"
     TYPE_IMAGE = "image"

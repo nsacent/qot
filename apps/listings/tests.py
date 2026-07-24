@@ -7,7 +7,7 @@ from django.core.files.uploadedfile import SimpleUploadedFile
 from django.core.management import call_command
 from django.test import override_settings
 from django.utils import timezone
-from PIL import Image
+from PIL import Image, ImageChops
 from rest_framework import status
 from rest_framework.test import APITestCase
 
@@ -23,6 +23,18 @@ from .models import (
     ListingImage,
     PendingListingImage,
 )
+from .watermarks import apply_qot_watermark
+
+
+class ListingWatermarkTests(APITestCase):
+    def test_watermark_remains_visible_on_light_and_dark_photos(self):
+        for colour in ((245, 245, 245), (20, 20, 20)):
+            source = Image.new("RGB", (800, 600), color=colour)
+            watermarked = apply_qot_watermark(source).convert("RGB")
+            difference = ImageChops.difference(source, watermarked)
+
+            self.assertIsNotNone(difference.getbbox())
+            self.assertGreater(max(channel[1] for channel in difference.getextrema()), 40)
 
 
 class ListingLifecycleTests(APITestCase):
@@ -589,6 +601,29 @@ class ListingLifecycleTests(APITestCase):
         with Image.open(pending_image.social_image) as social_image:
             self.assertEqual(social_image.size, (1200, 630))
             self.assertEqual(social_image.format, "WEBP")
+
+    def test_watermark_refresh_regenerates_existing_public_variants(self):
+        listing = self.create_listing()
+        listing_image = ListingImage.objects.create(
+            listing=listing,
+            image=self.make_image("old-detail.png", color=(245, 245, 245)),
+            source_image=self.make_image("clean-source.png", color=(245, 245, 245)),
+            is_watermarked=True,
+        )
+        original_name = listing_image.image.name
+
+        call_command("watermark_listing_images", "--refresh")
+
+        listing_image.refresh_from_db()
+        self.assertTrue(listing_image.is_watermarked)
+        self.assertTrue(listing_image.card_image)
+        self.assertTrue(listing_image.social_image)
+        self.assertNotEqual(listing_image.image.name, original_name)
+
+        with Image.open(listing_image.image) as refreshed_image:
+            source = Image.new("RGB", refreshed_image.size, color=(245, 245, 245))
+            difference = ImageChops.difference(source, refreshed_image.convert("RGB"))
+            self.assertGreater(max(channel[1] for channel in difference.getextrema()), 40)
 
     def test_existing_ad_upload_rejects_photo_from_another_ad(self):
         source_listing = self.create_listing()

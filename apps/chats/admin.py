@@ -1,6 +1,6 @@
 from django.contrib import admin
 
-from .models import ChatThread, ChatMessage
+from .models import ChatMessage, ChatThread, ChatThreadParticipantState
 
 
 class ChatMessageInline(admin.TabularInline):
@@ -85,4 +85,28 @@ class ChatMessageAdmin(admin.ModelAdmin):
     readonly_fields = [
         "created_at",
         "read_at",
+    ]
+
+
+@admin.register(ChatThreadParticipantState)
+class ChatThreadParticipantStateAdmin(admin.ModelAdmin):
+    list_display = [
+        "thread",
+        "user",
+        "is_favourite",
+        "is_archived",
+        "is_spam",
+        "is_marked_unread",
+        "updated_at",
+    ]
+    list_filter = [
+        "is_favourite",
+        "is_archived",
+        "is_spam",
+        "is_marked_unread",
+    ]
+    search_fields = [
+        "user__full_name",
+        "user__phone",
+        "thread__listing__title",
     ]

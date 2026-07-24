@@ -9,6 +9,8 @@ from .views import (
     ChatBlockAPIView,
     ChatUnblockAPIView,
     ChatReportAPIView,
+    ChatSocketTicketAPIView,
+    ChatThreadStateAPIView,
 )
 
 
@@ -16,8 +18,14 @@ app_name = "chats"
 
 
 urlpatterns = [
+    path("socket-ticket/", ChatSocketTicketAPIView.as_view(), name="socket_ticket"),
     path("threads/", ChatThreadListCreateAPIView.as_view(), name="thread_list_create"),
     path("threads/<int:pk>/", ChatThreadDetailAPIView.as_view(), name="thread_detail"),
+    path(
+        "threads/<int:thread_id>/state/",
+        ChatThreadStateAPIView.as_view(),
+        name="thread_state",
+    ),
     path(
         "threads/<int:thread_id>/messages/",
         ChatMessageListCreateAPIView.as_view(),

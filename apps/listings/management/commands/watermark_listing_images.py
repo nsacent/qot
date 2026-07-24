@@ -1,7 +1,7 @@
 from django.core.management.base import BaseCommand
 
+from apps.listings.image_processing import generate_listing_variants
 from apps.listings.models import ListingImage, PendingListingImage
-from apps.listings.watermarks import add_qot_watermark
 
 
 class Command(BaseCommand):
@@ -13,16 +13,23 @@ class Command(BaseCommand):
             action="store_true",
             help="Count unwatermarked images without changing files.",
         )
+        parser.add_argument(
+            "--refresh",
+            action="store_true",
+            help="Regenerate every public image using the latest watermark style.",
+        )
 
     def handle(self, *args, **options):
+        image_filter = {} if options["refresh"] else {"is_watermarked": False}
         querysets = (
-            ("advert", ListingImage.objects.filter(is_watermarked=False)),
-            ("staged", PendingListingImage.objects.filter(is_watermarked=False)),
+            ("advert", ListingImage.objects.filter(**image_filter)),
+            ("staged", PendingListingImage.objects.filter(**image_filter)),
         )
         total = sum(queryset.count() for _, queryset in querysets)
 
         if options["dry_run"]:
-            self.stdout.write(f"Found {total} image(s) awaiting a QOT watermark.")
+            action = "to refresh" if options["refresh"] else "awaiting a watermark"
+            self.stdout.write(f"Found {total} image(s) {action}.")
             return
 
         completed = 0
@@ -30,23 +37,62 @@ class Command(BaseCommand):
 
         for label, queryset in querysets:
             for image_record in queryset.iterator():
-                if not image_record.image:
+                source = image_record.source_image or image_record.image
+
+                if not source:
                     failed += 1
                     continue
 
-                original_name = image_record.image.name
-
                 try:
-                    watermarked_file = add_qot_watermark(image_record.image)
-                    storage = image_record.image.storage
-                    saved_name = storage.save(original_name, watermarked_file)
-                    type(image_record).objects.filter(pk=image_record.pk).update(
-                        image=saved_name,
-                        is_watermarked=True,
+                    variants = generate_listing_variants(source)
+                    old_files = [
+                        (field.storage, field.name)
+                        for field in (
+                            image_record.image,
+                            image_record.card_image,
+                            image_record.social_image,
+                        )
+                        if field and field.name
+                    ]
+
+                    image_record.image.save(
+                        variants.detail.name,
+                        variants.detail,
+                        save=False,
+                    )
+                    image_record.card_image.save(
+                        variants.card.name,
+                        variants.card,
+                        save=False,
+                    )
+                    image_record.social_image.save(
+                        variants.social.name,
+                        variants.social,
+                        save=False,
+                    )
+                    image_record.is_watermarked = True
+                    image_record.save(
+                        update_fields=[
+                            "image",
+                            "card_image",
+                            "social_image",
+                            "is_watermarked",
+                        ]
                     )
 
-                    if saved_name != original_name:
-                        storage.delete(original_name)
+                    new_names = {
+                        image_record.image.name,
+                        image_record.card_image.name,
+                        image_record.social_image.name,
+                    }
+                    source_name = (
+                        image_record.source_image.name
+                        if image_record.source_image
+                        else ""
+                    )
+                    for storage, old_name in old_files:
+                        if old_name not in new_names and old_name != source_name:
+                            storage.delete(old_name)
 
                     completed += 1
                 except (OSError, ValueError) as error:

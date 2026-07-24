@@ -4,6 +4,8 @@ from channels.db import database_sync_to_async
 from django.contrib.auth.models import AnonymousUser
 from rest_framework_simplejwt.authentication import JWTAuthentication
 
+from .socket_auth import get_user_from_chat_socket_ticket
+
 
 @database_sync_to_async
 def get_user_from_token(token):
@@ -16,6 +18,14 @@ def get_user_from_token(token):
         return AnonymousUser()
 
 
+@database_sync_to_async
+def get_user_from_ticket(ticket):
+    try:
+        return get_user_from_chat_socket_ticket(ticket)
+    except Exception:
+        return AnonymousUser()
+
+
 class JWTAuthMiddleware:
     def __init__(self, inner):
         self.inner = inner
@@ -24,9 +34,12 @@ class JWTAuthMiddleware:
         query_string = scope.get("query_string", b"").decode()
         query_params = parse_qs(query_string)
 
+        ticket_list = query_params.get("ticket")
         token_list = query_params.get("token")
 
-        if token_list:
+        if ticket_list:
+            scope["user"] = await get_user_from_ticket(ticket_list[0])
+        elif token_list:
             token = token_list[0]
             scope["user"] = await get_user_from_token(token)
         else:
