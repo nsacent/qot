@@ -93,6 +93,7 @@ class AdminUserDetailSerializer(AdminUserSerializer):
         default=0,
     )
     google_connected = serializers.SerializerMethodField()
+    facebook_connected = serializers.SerializerMethodField()
     listing_counts = serializers.SerializerMethodField()
     stats = serializers.SerializerMethodField()
     recent_listings = serializers.SerializerMethodField()
@@ -107,6 +108,7 @@ class AdminUserDetailSerializer(AdminUserSerializer):
             "bio",
             "trust_score",
             "google_connected",
+            "facebook_connected",
             "listing_counts",
             "stats",
             "recent_listings",
@@ -117,6 +119,9 @@ class AdminUserDetailSerializer(AdminUserSerializer):
 
     def get_google_connected(self, obj):
         return bool(obj.google_sub)
+
+    def get_facebook_connected(self, obj):
+        return bool(obj.facebook_sub)
 
     def get_listing_counts(self, obj):
         counts = obj.listings.values("status").annotate(total=Count("id"))

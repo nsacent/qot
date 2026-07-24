@@ -1,3 +1,6 @@
+import hashlib
+import hmac
+
 from django.conf import settings
 from django.contrib.auth import authenticate
 from django.contrib.auth.tokens import default_token_generator
@@ -10,6 +13,7 @@ from rest_framework_simplejwt.serializers import TokenRefreshSerializer
 from rest_framework_simplejwt.tokens import RefreshToken
 from google.auth.transport import requests as google_requests
 from google.oauth2 import id_token as google_id_token
+import requests as http_requests
 
 from apps.locations.models import City
 
@@ -293,6 +297,105 @@ class GoogleLoginSerializer(serializers.Serializer):
             )
 
         attrs["identity"] = identity
+        return attrs
+
+
+class FacebookLoginSerializer(serializers.Serializer):
+    access_token = serializers.CharField(write_only=True)
+    keep_signed_in = serializers.BooleanField(
+        default=False,
+        required=False,
+        write_only=True,
+    )
+
+    def _graph_request(self, path, params):
+        version = settings.FACEBOOK_GRAPH_API_VERSION
+
+        try:
+            response = http_requests.get(
+                f"https://graph.facebook.com/{version}/{path}",
+                params=params,
+                timeout=10,
+            )
+            payload = response.json()
+        except (http_requests.RequestException, ValueError, TypeError) as error:
+            raise serializers.ValidationError(
+                {"detail": "Facebook could not verify this sign-in. Please try again."}
+            ) from error
+
+        if (
+            not isinstance(payload, dict)
+            or response.status_code >= 400
+            or payload.get("error")
+        ):
+            raise serializers.ValidationError(
+                {"detail": "Facebook could not verify this sign-in. Please try again."}
+            )
+
+        return payload
+
+    def validate(self, attrs):
+        app_id = settings.FACEBOOK_OAUTH_APP_ID
+        app_secret = settings.FACEBOOK_OAUTH_APP_SECRET
+
+        if not app_id or not app_secret:
+            raise serializers.ValidationError(
+                {"detail": "Facebook sign-in is not configured on the server."}
+            )
+
+        access_token = attrs["access_token"]
+        debug_payload = self._graph_request(
+            "debug_token",
+            {
+                "input_token": access_token,
+                "access_token": f"{app_id}|{app_secret}",
+            },
+        ).get("data", {})
+
+        if (
+            debug_payload.get("is_valid") is not True
+            or str(debug_payload.get("app_id") or "") != str(app_id)
+            or not debug_payload.get("user_id")
+        ):
+            raise serializers.ValidationError(
+                {"detail": "Facebook returned an invalid sign-in token."}
+            )
+
+        app_secret_proof = hmac.new(
+            app_secret.encode(),
+            access_token.encode(),
+            hashlib.sha256,
+        ).hexdigest()
+        identity = self._graph_request(
+            "me",
+            {
+                "fields": "id,name,email,first_name,last_name,picture.type(large)",
+                "access_token": access_token,
+                "appsecret_proof": app_secret_proof,
+            },
+        )
+
+        subject = str(identity.get("id") or "").strip()
+        email = str(identity.get("email") or "").strip().lower()
+
+        if subject != str(debug_payload["user_id"]) or not email:
+            raise serializers.ValidationError(
+                {
+                    "detail": (
+                        "Facebook did not provide an email address. "
+                        "Allow email access and try again."
+                    )
+                }
+            )
+
+        attrs["identity"] = {
+            "sub": subject,
+            "email": email,
+            "name": str(identity.get("name") or "").strip(),
+            "given_name": str(identity.get("first_name") or "").strip(),
+            "family_name": str(identity.get("last_name") or "").strip(),
+            "picture": identity.get("picture"),
+        }
         return attrs
 
 

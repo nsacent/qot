@@ -19,6 +19,7 @@ from .serializers import (
     RegisterSerializer,
     LoginSerializer,
     GoogleLoginSerializer,
+    FacebookLoginSerializer,
     UserSerializer,
     ProfileUpdateSerializer,
     PasswordResetRequestSerializer,
@@ -208,6 +209,105 @@ class GoogleLoginAPIView(APIView):
             },
             status=status.HTTP_200_OK,
         )
+
+
+class FacebookLoginAPIView(APIView):
+    permission_classes = [permissions.AllowAny]
+
+    def post(self, request):
+        if request.content_type != "application/json":
+            return Response(
+                {"detail": "Facebook sign-in requires a JSON request."},
+                status=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
+            )
+
+        serializer = FacebookLoginSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        identity = serializer.validated_data["identity"]
+        facebook_sub = str(identity["sub"])
+        email = str(identity["email"]).strip().lower()
+        full_name = str(identity.get("name") or "").strip()
+
+        if not full_name:
+            full_name = " ".join(
+                value
+                for value in (
+                    str(identity.get("given_name") or "").strip(),
+                    str(identity.get("family_name") or "").strip(),
+                )
+                if value
+            ) or email.split("@")[0]
+
+        user = User.objects.filter(facebook_sub=facebook_sub).first()
+        found_by_email = False
+
+        if user is None:
+            user = User.objects.filter(email__iexact=email).first()
+            found_by_email = user is not None
+
+        if user and not user.is_active:
+            return Response(
+                {"detail": "This account is inactive."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        if user and user.is_banned:
+            return Response(
+                {"detail": "This account has been banned."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        if found_by_email:
+            if user.facebook_sub and user.facebook_sub != facebook_sub:
+                return Response(
+                    {"detail": "This email is linked to another Facebook account."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            user.facebook_sub = facebook_sub
+            user.is_verified = True
+            user.email_verified_at = timezone.now()
+            user.save(update_fields=[
+                "facebook_sub",
+                "is_verified",
+                "email_verified_at",
+                "updated_at",
+            ])
+
+        if user is None:
+            user = User.objects.create_user(
+                email=email,
+                full_name=full_name,
+                password=None,
+                facebook_sub=facebook_sub,
+                is_verified=True,
+                email_verified_at=timezone.now(),
+            )
+
+        if user.email and user.email.lower() == email and not user.email_verified:
+            user.email_verified_at = timezone.now()
+            user.is_verified = True
+            user.save(update_fields=[
+                "email_verified_at",
+                "is_verified",
+                "updated_at",
+            ])
+
+        tokens = get_tokens_for_user(
+            user,
+            keep_signed_in=serializer.validated_data["keep_signed_in"],
+        )
+
+        return Response(
+            {
+                "message": "Facebook sign-in successful.",
+                "user": UserSerializer(user).data,
+                "tokens": tokens,
+            },
+            status=status.HTTP_200_OK,
+        )
+
 
 class LogoutAPIView(APIView):
     permission_classes = [permissions.IsAuthenticated]

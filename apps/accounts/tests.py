@@ -3,7 +3,7 @@ from io import BytesIO
 from pathlib import Path
 import re
 from tempfile import TemporaryDirectory
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from django.conf import settings
 from django.contrib.auth.hashers import check_password
@@ -770,3 +770,120 @@ class GoogleAuthenticationTests(APITestCase):
 
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertFalse(User.objects.filter(email="google-user@example.com").exists())
+
+
+@override_settings(
+    FACEBOOK_OAUTH_APP_ID="qot-facebook-test",
+    FACEBOOK_OAUTH_APP_SECRET="facebook-test-secret",
+    FACEBOOK_GRAPH_API_VERSION="v25.0",
+)
+class FacebookAuthenticationTests(APITestCase):
+    facebook_url = "/api/v1/auth/facebook/"
+
+    def graph_response(self, payload, status_code=200):
+        response = Mock(status_code=status_code)
+        response.json.return_value = payload
+        return response
+
+    def valid_graph_responses(self, **profile_overrides):
+        profile = {
+            "id": "facebook-user-123",
+            "email": "facebook-user@example.com",
+            "name": "Facebook User",
+            "first_name": "Facebook",
+            "last_name": "User",
+        }
+        profile.update(profile_overrides)
+
+        return [
+            self.graph_response(
+                {
+                    "data": {
+                        "is_valid": True,
+                        "app_id": settings.FACEBOOK_OAUTH_APP_ID,
+                        "user_id": "facebook-user-123",
+                    }
+                }
+            ),
+            self.graph_response(profile),
+        ]
+
+    @patch("apps.accounts.serializers.http_requests.get")
+    def test_facebook_sign_in_creates_verified_user_and_session(self, graph_get):
+        graph_get.side_effect = self.valid_graph_responses()
+
+        response = self.client.post(
+            self.facebook_url,
+            {"access_token": "valid-facebook-token", "keep_signed_in": True},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        user = User.objects.get(email="facebook-user@example.com")
+        refresh = RefreshToken(response.data["tokens"]["refresh"])
+
+        self.assertEqual(user.facebook_sub, "facebook-user-123")
+        self.assertTrue(user.is_verified)
+        self.assertFalse(user.has_usable_password())
+        self.assertTrue(refresh["keep_signed_in"])
+        self.assertEqual(graph_get.call_count, 2)
+        self.assertTrue(
+            graph_get.call_args_list[0].args[0].endswith("/debug_token")
+        )
+        self.assertTrue(graph_get.call_args_list[1].args[0].endswith("/me"))
+
+    @patch("apps.accounts.serializers.http_requests.get")
+    def test_facebook_sign_in_links_existing_email_account(self, graph_get):
+        user = User.objects.create_user(
+            email="facebook-user@example.com",
+            full_name="Existing User",
+            password="existing-password",
+        )
+        graph_get.side_effect = self.valid_graph_responses()
+
+        response = self.client.post(
+            self.facebook_url,
+            {"access_token": "valid-facebook-token"},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        user.refresh_from_db()
+        self.assertEqual(user.facebook_sub, "facebook-user-123")
+        self.assertTrue(user.is_verified)
+        self.assertTrue(user.has_usable_password())
+
+    @patch("apps.accounts.serializers.http_requests.get")
+    def test_facebook_sign_in_rejects_token_for_another_app(self, graph_get):
+        graph_get.return_value = self.graph_response(
+            {
+                "data": {
+                    "is_valid": True,
+                    "app_id": "another-facebook-app",
+                    "user_id": "facebook-user-123",
+                }
+            }
+        )
+
+        response = self.client.post(
+            self.facebook_url,
+            {"access_token": "wrong-app-token"},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertFalse(User.objects.exists())
+        graph_get.assert_called_once()
+
+    @patch("apps.accounts.serializers.http_requests.get")
+    def test_facebook_sign_in_requires_email_permission(self, graph_get):
+        graph_get.side_effect = self.valid_graph_responses(email=None)
+
+        response = self.client.post(
+            self.facebook_url,
+            {"access_token": "facebook-token-without-email"},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertFalse(User.objects.exists())

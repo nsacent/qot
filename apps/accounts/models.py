@@ -51,6 +51,13 @@ class User(AbstractBaseUser, PermissionsMixin):
         blank=True,
         editable=False,
     )
+    facebook_sub = models.CharField(
+        max_length=255,
+        unique=True,
+        null=True,
+        blank=True,
+        editable=False,
+    )
 
     banned_reason = models.TextField(null=True, blank=True)
 
