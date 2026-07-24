@@ -4,7 +4,7 @@ from django.utils import timezone
 from PIL import Image
 from rest_framework import serializers
 
-from .image_processing import MIN_IMAGE_SIZE, normalize_crop_value
+from .image_processing import MIN_IMAGE_SIZE
 from .models import Listing, ListingDraft, ListingImage, ListingAttribute, PendingListingImage
 
 
@@ -25,9 +25,6 @@ class ListingImageSerializer(serializers.ModelSerializer):
             "social_image_url",
             "is_primary",
             "sort_order",
-            "crop_x",
-            "crop_y",
-            "crop_zoom",
             "created_at",
         ]
         read_only_fields = [
@@ -72,21 +69,12 @@ class ListingImageSerializer(serializers.ModelSerializer):
     def get_social_image_url(self, obj):
         return self._absolute_url(obj.social_image or obj.card_image or obj.image)
 
-    def validate_crop_x(self, value):
-        return normalize_crop_value(value, 0.5, 0.0, 1.0)
-
-    def validate_crop_y(self, value):
-        return normalize_crop_value(value, 0.5, 0.0, 1.0)
-
-    def validate_crop_zoom(self, value):
-        return normalize_crop_value(value, 1.0, 1.0, 2.5)
-
     def validate_image(self, image):
-        max_size = 10 * 1024 * 1024
+        max_size = 8 * 1024 * 1024
 
         if image.size > max_size:
             raise serializers.ValidationError(
-                "Image size must not exceed 10MB."
+                "Image size must not exceed 8MB."
             )
 
         allowed_extensions = ["jpg", "jpeg", "png", "webp"]
@@ -185,9 +173,6 @@ class ListingDraftSerializer(serializers.ModelSerializer):
                 "image_url": image_url,
                 "source_image_url": source_url,
                 "card_image_url": card_url,
-                "crop_x": image.crop_x,
-                "crop_y": image.crop_y,
-                "crop_zoom": image.crop_zoom,
             })
 
         return result

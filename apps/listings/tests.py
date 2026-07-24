@@ -195,6 +195,11 @@ class ListingLifecycleTests(APITestCase):
             value="16gb",
         )
         self.authenticate_owner()
+        staged_response = self.client.post(
+            "/api/v1/listings/images/stage/",
+            {"image": self.make_image("attribute-listing.png")},
+            format="multipart",
+        )
 
         response = self.client.post(
             "/api/v1/listings/",
@@ -211,7 +216,7 @@ class ListingLifecycleTests(APITestCase):
                         "value_text": str(option.id),
                     }
                 ],
-                "staged_image_ids": [],
+                "staged_image_ids": [staged_response.data["id"]],
             },
             format="json",
         )
@@ -451,7 +456,7 @@ class ListingLifecycleTests(APITestCase):
             "Partly completed advert",
         )
 
-    def test_draft_photos_are_reserved_until_draft_is_deleted(self):
+    def test_draft_photos_are_removed_when_draft_is_deleted(self):
         self.authenticate_owner()
         pending_image = PendingListingImage.objects.create(
             user=self.owner,
@@ -470,10 +475,9 @@ class ListingLifecycleTests(APITestCase):
         self.assertTrue(ListingDraft.objects.filter(user=self.owner).exists())
 
         delete_response = self.client.delete("/api/v1/listings/draft/")
-        pending_image.refresh_from_db()
 
         self.assertEqual(delete_response.status_code, status.HTTP_204_NO_CONTENT)
-        self.assertFalse(pending_image.reserved_for_draft)
+        self.assertFalse(PendingListingImage.objects.filter(pk=pending_image.id).exists())
         self.assertFalse(ListingDraft.objects.filter(user=self.owner).exists())
 
     def test_staged_draft_photo_delete_is_idempotent_and_updates_draft(self):
@@ -648,33 +652,55 @@ class ListingLifecycleTests(APITestCase):
         self.assertTrue(uploaded_image.card_image)
         self.assertTrue(uploaded_image.social_image)
 
-    def test_owner_can_adjust_existing_photo_crop(self):
-        listing = self.create_listing()
+    def test_category_photo_minimum_is_enforced_when_creating_an_ad(self):
+        vehicles = Category.objects.create(name="Vehicles", slug="vehicles")
+        cars = Category.objects.create(name="Cars", slug="cars", parent=vehicles)
         self.authenticate_owner()
-        upload_response = self.client.post(
-            f"/api/v1/listings/{listing.id}/images/",
-            {"image": self.make_image("crop-source.png", size=(1200, 800))},
+
+        staged_response = self.client.post(
+            "/api/v1/listings/images/stage/",
+            {"image": self.make_image("car-only-photo.png", color=(20, 80, 160))},
             format="multipart",
         )
-        image = listing.images.get(pk=upload_response.data["id"])
-        original_card_name = image.card_image.name
-
-        crop_response = self.client.patch(
-            f"/api/v1/listings/{listing.id}/images/{image.id}/crop/",
-            {"crop_x": 0.75, "crop_y": 0.3, "crop_zoom": 1.6},
+        response = self.client.post(
+            "/api/v1/listings/",
+            {
+                "category": cars.id,
+                "city": self.city.id,
+                "title": "Car with too few photos",
+                "description": "A car advert must show buyers several useful angles.",
+                "price": "35000000.00",
+                "condition": Listing.CONDITION_USED,
+                "staged_image_ids": [staged_response.data["id"]],
+            },
             format="json",
         )
 
-        image.refresh_from_db()
-        self.assertEqual(crop_response.status_code, status.HTTP_200_OK)
-        self.assertAlmostEqual(image.crop_x, 0.75)
-        self.assertAlmostEqual(image.crop_y, 0.3)
-        self.assertAlmostEqual(image.crop_zoom, 1.6)
-        self.assertNotEqual(image.card_image.name, original_card_name)
-        self.assertFalse((Path(self.media_directory.name) / original_card_name).exists())
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("Cars requires at least 4 photos", str(response.data))
 
-        with Image.open(image.card_image) as card_image:
-            self.assertEqual(card_image.size, (800, 600))
+    def test_image_larger_than_eight_megabytes_is_rejected(self):
+        self.authenticate_owner()
+        image_bytes = BytesIO()
+        Image.effect_noise((3000, 3000), 100).convert("RGB").save(
+            image_bytes,
+            format="JPEG",
+            quality=100,
+        )
+        oversized = SimpleUploadedFile(
+            "oversized.jpg",
+            image_bytes.getvalue(),
+            content_type="image/jpeg",
+        )
+
+        response = self.client.post(
+            "/api/v1/listings/images/stage/",
+            {"image": oversized},
+            format="multipart",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("8MB", str(response.data))
 
     def test_marketplace_filters_support_multi_select_and_numeric_ranges(self):
         brand = CategoryFilter.objects.create(

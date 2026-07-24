@@ -9,45 +9,40 @@ WATERMARK_TEXT = "QOT"
 
 
 def _watermark_font(size):
-    try:
-        return ImageFont.truetype("DejaVuSans-Bold.ttf", size=size)
-    except OSError:
-        return ImageFont.load_default()
+    candidates = (
+        "DejaVuSans-Bold.ttf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+        "/System/Library/Fonts/Supplemental/Arial Bold.ttf",
+        "/Library/Fonts/Arial Bold.ttf",
+    )
+
+    for candidate in candidates:
+        try:
+            return ImageFont.truetype(candidate, size=size)
+        except OSError:
+            continue
+
+    return ImageFont.load_default()
 
 
 def apply_qot_watermark(image):
-    """Return an RGBA image with a subtle, centred QOT watermark."""
+    """Return an RGBA image with a very faint, centred QOT wordmark."""
     watermarked_source = image.convert("RGBA")
     shortest_side = max(1, min(watermarked_source.size))
-    font_size = max(16, int(shortest_side * 0.11))
+    font_size = max(16, int(shortest_side * 0.09))
     font = _watermark_font(font_size)
     overlay = Image.new("RGBA", watermarked_source.size, (0, 0, 0, 0))
     draw = ImageDraw.Draw(overlay)
-    text_box = draw.textbbox((0, 0), WATERMARK_TEXT, font=font, stroke_width=1)
+    text_box = draw.textbbox((0, 0), WATERMARK_TEXT, font=font)
     text_width = text_box[2] - text_box[0]
     text_height = text_box[3] - text_box[1]
-    padding_x = max(8, int(font_size * 0.42))
-    padding_y = max(5, int(font_size * 0.22))
-    box_width = text_width + (padding_x * 2)
-    box_height = text_height + (padding_y * 2)
-    left = max(0, (watermarked_source.width - box_width) // 2)
-    top = max(0, (watermarked_source.height - box_height) // 2)
-    radius = max(6, int(box_height * 0.28))
-
-    draw.rounded_rectangle(
-        (left, top, left + box_width, top + box_height),
-        radius=radius,
-        fill=(15, 23, 42, 52),
-        outline=(255, 255, 255, 38),
-        width=max(1, int(shortest_side * 0.002)),
-    )
+    left = max(0, (watermarked_source.width - text_width) // 2)
+    top = max(0, (watermarked_source.height - text_height) // 2)
     draw.text(
-        (left + padding_x, top + padding_y - text_box[1]),
+        (left, top - text_box[1]),
         WATERMARK_TEXT,
         font=font,
-        fill=(255, 255, 255, 142),
-        stroke_width=1,
-        stroke_fill=(15, 23, 42, 72),
+        fill=(255, 255, 255, 28),
     )
 
     return Image.alpha_composite(watermarked_source, overlay)

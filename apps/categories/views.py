@@ -22,6 +22,7 @@ def with_listing_counts(queryset):
     child_queryset = (
         Category.objects
         .filter(is_active=True)
+        .select_related("parent")
         .annotate(
             listings_count=Count(
                 "listings",

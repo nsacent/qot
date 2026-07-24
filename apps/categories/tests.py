@@ -92,3 +92,18 @@ class CategoryFilterCatalogTests(TestCase):
         ]
         self.assertNotIn("mileage", keys)
         self.assertNotIn("Obsolete", option_values)
+
+    def test_category_api_includes_photo_requirements(self):
+        response = self.client.get("/api/v1/categories/")
+
+        self.assertEqual(response.status_code, 200)
+        vehicles = next(item for item in response.data if item["slug"] == "vehicles")
+        cars = next(item for item in vehicles["children"] if item["slug"] == "cars")
+        vehicle_services = next(
+            item for item in vehicles["children"] if item["slug"] == "vehicle-services"
+        )
+
+        self.assertEqual(cars["minimum_photos"], 4)
+        self.assertEqual(cars["maximum_photos"], 10)
+        self.assertEqual(vehicle_services["minimum_photos"], 1)
+        self.assertEqual(vehicle_services["maximum_photos"], 5)

@@ -18,10 +18,11 @@ from .image_fingerprints import (
 )
 from .image_processing import (
     delete_listing_image_files,
-    generate_listing_variants,
-    normalize_crop,
-    prepare_listing_source,
     process_listing_upload,
+)
+from .photo_requirements import (
+    get_category_photo_requirements,
+    validate_category_photo_count,
 )
 from .permissions import IsListingOwnerOrReadOnly
 
@@ -153,13 +154,13 @@ class ListingListCreateAPIView(generics.ListCreateAPIView):
         else:
             payload["attributes"] = attributes
 
+        serializer = self.get_serializer(data=payload)
+        serializer.is_valid(raise_exception=True)
         images = request.FILES.getlist("images")
-
-        if len(images) + len(staged_image_ids) > 10:
-            return Response(
-                {"images": ["A listing can have a maximum of 10 images."]},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+        validate_category_photo_count(
+            serializer.validated_data["category"],
+            len(images) + len(staged_image_ids),
+        )
 
         validated_images = []
         seen_image_hashes = set()
@@ -182,13 +183,7 @@ class ListingListCreateAPIView(generics.ListCreateAPIView):
                 "social_image": processed.social,
                 "content_hash": content_hash,
                 "is_watermarked": True,
-                "crop_x": 0.5,
-                "crop_y": 0.5,
-                "crop_zoom": 1.0,
             })
-
-        serializer = self.get_serializer(data=payload)
-        serializer.is_valid(raise_exception=True)
 
         with transaction.atomic():
             staged_images = list(
@@ -225,9 +220,6 @@ class ListingListCreateAPIView(generics.ListCreateAPIView):
                 "social_image": staged_by_id[image_id].social_image.name,
                 "content_hash": staged_image_hashes[image_id],
                 "is_watermarked": staged_by_id[image_id].is_watermarked,
-                "crop_x": staged_by_id[image_id].crop_x,
-                "crop_y": staged_by_id[image_id].crop_y,
-                "crop_zoom": staged_by_id[image_id].crop_zoom,
             } for image_id in staged_image_ids] + validated_images
 
             for index, image_data in enumerate(ordered_images):
@@ -422,9 +414,6 @@ def pending_image_payload(pending_image, request):
         "source_image_url": request.build_absolute_uri(source_image.url),
         "card_image_url": request.build_absolute_uri(card_image.url),
         "social_image_url": request.build_absolute_uri(social_image.url),
-        "crop_x": pending_image.crop_x,
-        "crop_y": pending_image.crop_y,
-        "crop_zoom": pending_image.crop_zoom,
     }
 
 
@@ -449,11 +438,6 @@ class PendingListingImageAPIView(APIView):
         image_serializer = ListingImageSerializer(data=request.data)
         image_serializer.is_valid(raise_exception=True)
         validated_image = image_serializer.validated_data["image"]
-        crop_x, crop_y, crop_zoom = normalize_crop(
-            image_serializer.validated_data.get("crop_x"),
-            image_serializer.validated_data.get("crop_y"),
-            image_serializer.validated_data.get("crop_zoom"),
-        )
         content_hash = validate_image_for_user(
             user=request.user,
             image_file=validated_image,
@@ -468,12 +452,7 @@ class PendingListingImageAPIView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        processed = process_listing_upload(
-            validated_image,
-            crop_x,
-            crop_y,
-            crop_zoom,
-        )
+        processed = process_listing_upload(validated_image)
         pending_image = PendingListingImage.objects.create(
             user=request.user,
             image=processed.detail,
@@ -482,72 +461,11 @@ class PendingListingImageAPIView(APIView):
             social_image=processed.social,
             content_hash=content_hash,
             is_watermarked=True,
-            crop_x=crop_x,
-            crop_y=crop_y,
-            crop_zoom=crop_zoom,
         )
 
         return Response(
             pending_image_payload(pending_image, request),
             status=status.HTTP_201_CREATED,
-        )
-
-    def patch(self, request, pk):
-        pending_image = PendingListingImage.objects.filter(
-            pk=pk,
-            user=request.user,
-        ).first()
-
-        if not pending_image:
-            return Response(
-                {"detail": "Staged photo not found."},
-                status=status.HTTP_404_NOT_FOUND,
-            )
-
-        crop_x, crop_y, crop_zoom = normalize_crop(
-            request.data.get("crop_x", pending_image.crop_x),
-            request.data.get("crop_y", pending_image.crop_y),
-            request.data.get("crop_zoom", pending_image.crop_zoom),
-        )
-        old_variant_names = {
-            pending_image.image.name,
-            pending_image.card_image.name,
-            pending_image.social_image.name,
-        }
-
-        if pending_image.source_image:
-            source_image = pending_image.source_image
-        else:
-            source_image = prepare_listing_source(pending_image.image)
-            pending_image.source_image = source_image
-
-        variants = generate_listing_variants(
-            source_image,
-            crop_x,
-            crop_y,
-            crop_zoom,
-        )
-        pending_image.image = variants.detail
-        pending_image.card_image = variants.card
-        pending_image.social_image = variants.social
-        pending_image.crop_x = crop_x
-        pending_image.crop_y = crop_y
-        pending_image.crop_zoom = crop_zoom
-        pending_image.is_watermarked = True
-        pending_image.save()
-
-        new_names = {
-            pending_image.image.name,
-            pending_image.source_image.name,
-            pending_image.card_image.name,
-            pending_image.social_image.name,
-        }
-        for old_name in old_variant_names - new_names - {""}:
-            pending_image.image.storage.delete(old_name)
-
-        return Response(
-            pending_image_payload(pending_image, request),
-            status=status.HTTP_200_OK,
         )
 
     def delete(self, request, pk):
@@ -683,10 +601,15 @@ class ListingDraftAPIView(APIView):
         draft = ListingDraft.objects.select_for_update().filter(user=request.user).first()
 
         if draft:
-            PendingListingImage.objects.filter(
+            staged_images = list(PendingListingImage.objects.filter(
                 user=request.user,
                 id__in=draft.staged_image_ids,
-            ).update(reserved_for_draft=False)
+            ))
+
+            for staged_image in staged_images:
+                delete_listing_image_files(staged_image)
+                staged_image.delete()
+
             draft.delete()
 
         return Response(status=status.HTTP_204_NO_CONTENT)
@@ -1045,10 +968,16 @@ class ListingImageUploadAPIView(APIView):
             )
 
         current_images_count = listing.images.count()
+        photo_requirements = get_category_photo_requirements(listing.category)
 
-        if current_images_count >= 10:
+        if current_images_count >= photo_requirements.maximum:
             return Response(
-                {"detail": "A listing can have a maximum of 10 images."},
+                {
+                    "detail": (
+                        f"{listing.category.name} allows a maximum of "
+                        f"{photo_requirements.maximum} photos."
+                    )
+                },
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
@@ -1058,23 +987,13 @@ class ListingImageUploadAPIView(APIView):
         )
         serializer.is_valid(raise_exception=True)
         validated_image = serializer.validated_data["image"]
-        crop_x, crop_y, crop_zoom = normalize_crop(
-            serializer.validated_data.get("crop_x"),
-            serializer.validated_data.get("crop_y"),
-            serializer.validated_data.get("crop_zoom"),
-        )
         content_hash = validate_image_for_user(
             user=request.user,
             image_file=validated_image,
         )
 
         is_first_image = current_images_count == 0
-        processed = process_listing_upload(
-            validated_image,
-            crop_x,
-            crop_y,
-            crop_zoom,
-        )
+        processed = process_listing_upload(validated_image)
 
         image = serializer.save(
             listing=listing,
@@ -1086,9 +1005,6 @@ class ListingImageUploadAPIView(APIView):
             is_watermarked=True,
             is_primary=is_first_image,
             sort_order=current_images_count,
-            crop_x=crop_x,
-            crop_y=crop_y,
-            crop_zoom=crop_zoom,
         )
 
         response_serializer = ListingImageSerializer(
@@ -1100,82 +1016,6 @@ class ListingImageUploadAPIView(APIView):
             response_serializer.data,
             status=status.HTTP_201_CREATED,
         )
-
-
-
-
-
-class CropListingImageAPIView(APIView):
-    permission_classes = [
-        permissions.IsAuthenticated,
-        IsNotBanned,
-        IsVerifiedUser,
-    ]
-
-    def patch(self, request, pk, image_id):
-        try:
-            listing = Listing.objects.get(pk=pk, seller=request.user)
-        except Listing.DoesNotExist:
-            return Response(
-                {"detail": "Listing not found."},
-                status=status.HTTP_404_NOT_FOUND,
-            )
-
-        try:
-            image = listing.images.get(pk=image_id)
-        except ListingImage.DoesNotExist:
-            return Response(
-                {"detail": "Image not found."},
-                status=status.HTTP_404_NOT_FOUND,
-            )
-
-        crop_x, crop_y, crop_zoom = normalize_crop(
-            request.data.get("crop_x", image.crop_x),
-            request.data.get("crop_y", image.crop_y),
-            request.data.get("crop_zoom", image.crop_zoom),
-        )
-        old_variant_names = {
-            image.image.name,
-            image.card_image.name,
-            image.social_image.name,
-        }
-
-        if image.source_image:
-            source_image = image.source_image
-        else:
-            source_image = prepare_listing_source(image.image)
-            image.source_image = source_image
-
-        variants = generate_listing_variants(
-            source_image,
-            crop_x,
-            crop_y,
-            crop_zoom,
-        )
-        image.image = variants.detail
-        image.card_image = variants.card
-        image.social_image = variants.social
-        image.crop_x = crop_x
-        image.crop_y = crop_y
-        image.crop_zoom = crop_zoom
-        image.is_watermarked = True
-        image.save()
-
-        new_names = {
-            image.image.name,
-            image.source_image.name,
-            image.card_image.name,
-            image.social_image.name,
-        }
-        for old_name in old_variant_names - new_names - {""}:
-            image.image.storage.delete(old_name)
-
-        return Response(
-            ListingImageSerializer(image, context={"request": request}).data,
-            status=status.HTTP_200_OK,
-        )
-
-
 class ListingImageDeleteAPIView(APIView):
     permission_classes = [
         permissions.IsAuthenticated,
@@ -1297,6 +1137,11 @@ class ReorderListingImagesAPIView(APIView):
             )
 
         current_ids = list(listing.images.values_list("id", flat=True))
+        validate_category_photo_count(
+            listing.category,
+            len(normalized_ids),
+            field="image_ids",
+        )
 
         if (
             len(normalized_ids) != len(set(normalized_ids))

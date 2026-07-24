@@ -31,23 +31,6 @@ class ListingImageVariants:
     social: ContentFile
 
 
-def normalize_crop_value(value, default, minimum, maximum):
-    try:
-        number = float(value)
-    except (TypeError, ValueError):
-        number = default
-
-    return min(max(number, minimum), maximum)
-
-
-def normalize_crop(crop_x=0.5, crop_y=0.5, crop_zoom=1.0):
-    return (
-        normalize_crop_value(crop_x, 0.5, 0.0, 1.0),
-        normalize_crop_value(crop_y, 0.5, 0.0, 1.0),
-        normalize_crop_value(crop_zoom, 1.0, 1.0, 2.5),
-    )
-
-
 def _open_clean_image(image_file):
     try:
         image_file.seek(0)
@@ -74,7 +57,7 @@ def _resize_to_max_edge(image, max_edge):
     return result
 
 
-def _crop_to_aspect(image, size, crop_x, crop_y, crop_zoom):
+def _crop_to_aspect(image, size):
     target_width, target_height = size
     target_ratio = target_width / target_height
     image_width, image_height = image.size
@@ -87,10 +70,10 @@ def _crop_to_aspect(image, size, crop_x, crop_y, crop_zoom):
         base_width = image_width
         base_height = base_width / target_ratio
 
-    crop_width = max(1, base_width / crop_zoom)
-    crop_height = max(1, base_height / crop_zoom)
-    center_x = crop_x * image_width
-    center_y = crop_y * image_height
+    crop_width = max(1, base_width)
+    crop_height = max(1, base_height)
+    center_x = image_width / 2
+    center_y = image_height / 2
     left = min(max(center_x - (crop_width / 2), 0), image_width - crop_width)
     top = min(max(center_y - (crop_height / 2), 0), image_height - crop_height)
     right = left + crop_width
@@ -130,16 +113,15 @@ def prepare_listing_source(image_file):
     return _save_webp(source, safe_stem, "source", 90)
 
 
-def generate_listing_variants(source_file, crop_x=0.5, crop_y=0.5, crop_zoom=1.0):
-    crop_x, crop_y, crop_zoom = normalize_crop(crop_x, crop_y, crop_zoom)
+def generate_listing_variants(source_file):
     source = _open_clean_image(source_file)
     stem = Path(getattr(source_file, "name", "qot-photo")).stem or "qot-photo"
     detail = apply_qot_watermark(_resize_to_max_edge(source, DETAIL_MAX_EDGE))
     card = apply_qot_watermark(
-        _crop_to_aspect(source, CARD_SIZE, crop_x, crop_y, crop_zoom)
+        _crop_to_aspect(source, CARD_SIZE)
     )
     social = apply_qot_watermark(
-        _crop_to_aspect(source, SOCIAL_SIZE, crop_x, crop_y, crop_zoom)
+        _crop_to_aspect(source, SOCIAL_SIZE)
     )
 
     return ListingImageVariants(
@@ -149,9 +131,9 @@ def generate_listing_variants(source_file, crop_x=0.5, crop_y=0.5, crop_zoom=1.0
     )
 
 
-def process_listing_upload(image_file, crop_x=0.5, crop_y=0.5, crop_zoom=1.0):
+def process_listing_upload(image_file):
     source = prepare_listing_source(image_file)
-    variants = generate_listing_variants(source, crop_x, crop_y, crop_zoom)
+    variants = generate_listing_variants(source)
     return ProcessedListingImages(
         source=source,
         detail=variants.detail,
