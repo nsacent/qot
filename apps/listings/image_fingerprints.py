@@ -74,7 +74,12 @@ def _backfill_missing_hashes(queryset):
         ensure_image_hash(image_record)
 
 
-def find_duplicate_listing_image(user, content_hash, exclude_listing_id=None):
+def find_duplicate_listing_image(
+    user,
+    content_hash,
+    exclude_listing_id=None,
+    exclude_image_ids=None,
+):
     queryset = ListingImage.objects.filter(
         listing__seller=user,
     ).exclude(
@@ -83,6 +88,9 @@ def find_duplicate_listing_image(user, content_hash, exclude_listing_id=None):
 
     if exclude_listing_id is not None:
         queryset = queryset.exclude(listing_id=exclude_listing_id)
+
+    if exclude_image_ids:
+        queryset = queryset.exclude(pk__in=exclude_image_ids)
 
     _backfill_missing_hashes(queryset)
 
@@ -108,6 +116,7 @@ def validate_image_for_user(
     user,
     image_file,
     exclude_listing_id=None,
+    exclude_image_ids=None,
     exclude_pending_ids=None,
     check_pending=False,
     seen_hashes=None,
@@ -122,6 +131,7 @@ def validate_image_for_user(
         user,
         content_hash,
         exclude_listing_id=exclude_listing_id,
+        exclude_image_ids=exclude_image_ids,
     ):
         raise ValidationError({error_field: [DUPLICATE_AD_IMAGE_MESSAGE]})
 

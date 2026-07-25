@@ -707,6 +707,41 @@ class ListingLifecycleTests(APITestCase):
             self.assertEqual(social_image.size, (1200, 630))
             self.assertEqual(social_image.format, "WEBP")
 
+    def test_staged_photo_can_be_replaced_after_client_side_crop(self):
+        self.authenticate_owner()
+        initial_response = self.client.post(
+            "/api/v1/listings/images/stage/",
+            {"image": self.make_image("initial-crop.png", color=(30, 64, 175))},
+            format="multipart",
+        )
+        pending_image = PendingListingImage.objects.get(pk=initial_response.data["id"])
+        original_file_names = {
+            pending_image.image.name,
+            pending_image.source_image.name,
+            pending_image.card_image.name,
+            pending_image.social_image.name,
+        }
+
+        replacement = self.make_image("new-crop.png", color=(249, 115, 22))
+        expected_hash = calculate_content_hash(replacement)
+        response = self.client.patch(
+            f"/api/v1/listings/images/stage/{pending_image.id}/",
+            {"image": replacement},
+            format="multipart",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        pending_image.refresh_from_db()
+        self.assertEqual(response.data["id"], pending_image.id)
+        self.assertEqual(pending_image.content_hash, expected_hash)
+        self.assertTrue(pending_image.is_watermarked)
+        self.assertFalse(original_file_names.intersection({
+            pending_image.image.name,
+            pending_image.source_image.name,
+            pending_image.card_image.name,
+            pending_image.social_image.name,
+        }))
+
     def test_watermark_refresh_regenerates_existing_public_variants(self):
         listing = self.create_listing()
         listing_image = ListingImage.objects.create(
@@ -791,6 +826,32 @@ class ListingLifecycleTests(APITestCase):
         self.assertTrue(uploaded_image.source_image)
         self.assertTrue(uploaded_image.card_image)
         self.assertTrue(uploaded_image.social_image)
+
+    def test_existing_ad_photo_crop_replaces_image_without_changing_its_position(self):
+        listing = self.create_listing()
+        image = ListingImage.objects.create(
+            listing=listing,
+            image=self.make_image("before-crop.png", color=(37, 99, 235)),
+            is_primary=True,
+            sort_order=3,
+        )
+        self.authenticate_owner()
+        replacement = self.make_image("after-crop.png", color=(16, 185, 129))
+        expected_hash = calculate_content_hash(replacement)
+
+        response = self.client.patch(
+            f"/api/v1/listings/{listing.id}/images/{image.id}/",
+            {"image": replacement},
+            format="multipart",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        image.refresh_from_db()
+        self.assertEqual(response.data["id"], image.id)
+        self.assertEqual(image.content_hash, expected_hash)
+        self.assertTrue(image.is_watermarked)
+        self.assertTrue(image.is_primary)
+        self.assertEqual(image.sort_order, 3)
 
     def test_category_photo_minimum_is_enforced_when_creating_an_ad(self):
         vehicles = Category.objects.create(name="Vehicles", slug="vehicles")

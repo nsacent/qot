@@ -1,6 +1,7 @@
 import json
 import math
 
+from django.core.files.storage import default_storage
 from django.db import transaction
 from django.db.models import Count, F, Q
 from django.utils.text import slugify
@@ -43,6 +44,15 @@ from django.utils import timezone
 
 from apps.searches.alerts import notify_saved_search_matches_for_listing
 from apps.notifications.services import notify_admins_new_listing
+
+
+def delete_replaced_image_files(old_names, new_names):
+    """Remove superseded variants after their replacement has saved successfully."""
+    retained_names = {name for name in new_names if name}
+
+    for name in old_names:
+        if name and name not in retained_names:
+            default_storage.delete(name)
 
 
 class ListingListCreateAPIView(generics.ListCreateAPIView):
@@ -470,6 +480,65 @@ class PendingListingImageAPIView(APIView):
             pending_image_payload(pending_image, request),
             status=status.HTTP_201_CREATED,
         )
+
+    def patch(self, request, pk):
+        pending_image = PendingListingImage.objects.filter(
+            pk=pk,
+            user=request.user,
+        ).first()
+
+        if not pending_image:
+            return Response(
+                {"detail": "Staged image not found."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        image_serializer = ListingImageSerializer(data=request.data)
+        image_serializer.is_valid(raise_exception=True)
+        validated_image = image_serializer.validated_data["image"]
+        content_hash = validate_image_for_user(
+            user=request.user,
+            image_file=validated_image,
+            exclude_pending_ids=[pending_image.id],
+            check_pending=True,
+        )
+        processed = process_listing_upload(validated_image)
+        old_file_names = [
+            field.name
+            for field in (
+                pending_image.image,
+                pending_image.source_image,
+                pending_image.card_image,
+                pending_image.social_image,
+            )
+            if field and field.name
+        ]
+
+        pending_image.image = processed.detail
+        pending_image.source_image = processed.source
+        pending_image.card_image = processed.card
+        pending_image.social_image = processed.social
+        pending_image.content_hash = content_hash
+        pending_image.is_watermarked = True
+        pending_image.save(update_fields=[
+            "image",
+            "source_image",
+            "card_image",
+            "social_image",
+            "content_hash",
+            "is_watermarked",
+        ])
+        delete_replaced_image_files(
+            old_file_names,
+            [
+                pending_image.image.name,
+                pending_image.source_image.name,
+                pending_image.card_image.name,
+                pending_image.social_image.name,
+            ],
+        )
+
+        return Response(pending_image_payload(pending_image, request))
 
     def delete(self, request, pk):
         pending_image = PendingListingImage.objects.filter(
@@ -1058,6 +1127,72 @@ class ListingImageDeleteAPIView(APIView):
         IsNotBanned,
         IsVerifiedUser,
     ]
+
+    def patch(self, request, pk, image_id):
+        try:
+            listing = Listing.objects.get(pk=pk, seller=request.user)
+            image = listing.images.get(pk=image_id)
+        except Listing.DoesNotExist:
+            return Response(
+                {"detail": "Listing not found."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        except ListingImage.DoesNotExist:
+            return Response(
+                {"detail": "Image not found."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        serializer = ListingImageSerializer(
+            data=request.data,
+            context={"request": request},
+        )
+        serializer.is_valid(raise_exception=True)
+        validated_image = serializer.validated_data["image"]
+        content_hash = validate_image_for_user(
+            user=request.user,
+            image_file=validated_image,
+            exclude_image_ids=[image.id],
+        )
+        processed = process_listing_upload(validated_image)
+        old_file_names = [
+            field.name
+            for field in (
+                image.image,
+                image.source_image,
+                image.card_image,
+                image.social_image,
+            )
+            if field and field.name
+        ]
+
+        image.image = processed.detail
+        image.source_image = processed.source
+        image.card_image = processed.card
+        image.social_image = processed.social
+        image.content_hash = content_hash
+        image.is_watermarked = True
+        image.save(update_fields=[
+            "image",
+            "source_image",
+            "card_image",
+            "social_image",
+            "content_hash",
+            "is_watermarked",
+        ])
+        delete_replaced_image_files(
+            old_file_names,
+            [
+                image.image.name,
+                image.source_image.name,
+                image.card_image.name,
+                image.social_image.name,
+            ],
+        )
+
+        return Response(
+            ListingImageSerializer(image, context={"request": request}).data
+        )
 
     def delete(self, request, pk, image_id):
         try:
