@@ -27,10 +27,12 @@ class Listing(models.Model):
 
     CONDITION_NEW = "new"
     CONDITION_USED = "used"
+    CONDITION_REFURBISHED = "refurbished"
 
     CONDITION_CHOICES = [
         (CONDITION_NEW, "New"),
         (CONDITION_USED, "Used"),
+        (CONDITION_REFURBISHED, "Refurbished"),
     ]
 
     seller = models.ForeignKey(

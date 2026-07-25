@@ -20,7 +20,10 @@ class FavoriteListAPIView(generics.ListAPIView):
     def get_queryset(self):
         return (
             Favorite.objects
-            .filter(user=self.request.user)
+            .filter(
+                user=self.request.user,
+                listing__status=Listing.STATUS_ACTIVE,
+            )
             .select_related(
                 "listing",
                 "listing__seller",

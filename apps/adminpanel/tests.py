@@ -493,6 +493,25 @@ class AdminListingManagementTests(APITestCase):
         self.assertFalse(self.listing.is_featured)
         self.assertIsNone(self.listing.featured_until)
 
+    @patch(
+        "apps.adminpanel.views.create_listing_rejected_notification",
+        side_effect=RuntimeError("Notification service unavailable"),
+    )
+    def test_rejection_succeeds_when_seller_notification_fails(self, _notification):
+        response = self.client.post(
+            f"/api/v1/admin-panel/listings/{self.listing.id}/reject/",
+            {"rejection_reason": "The seller must correct the ad details."},
+            format="json",
+        )
+        self.listing.refresh_from_db()
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(self.listing.status, Listing.STATUS_REJECTED)
+        self.assertEqual(
+            self.listing.rejection_reason,
+            "The seller must correct the ad details.",
+        )
+
     def test_delete_action_soft_deletes_listing(self):
         self.listing.status = Listing.STATUS_ACTIVE
         self.listing.is_featured = True

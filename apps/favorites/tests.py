@@ -7,6 +7,7 @@ from apps.accounts.models import User
 from apps.categories.models import Category
 from apps.listings.models import Listing
 from apps.locations.models import City, Region
+from .models import Favorite
 
 
 class FavoriteNotificationTests(APITestCase):
@@ -50,3 +51,28 @@ class FavoriteNotificationTests(APITestCase):
         self.assertEqual(first_response.status_code, status.HTTP_201_CREATED)
         self.assertEqual(second_response.status_code, status.HTTP_200_OK)
         notify_favorite.assert_called_once()
+
+    def test_saved_ads_only_returns_active_ads(self):
+        Favorite.objects.create(user=self.buyer, listing=self.listing)
+
+        active_response = self.client.get("/api/v1/favorites/")
+        self.assertEqual(active_response.status_code, status.HTTP_200_OK)
+        self.assertEqual(active_response.data["count"], 1)
+
+        self.listing.status = Listing.STATUS_REJECTED
+        self.listing.save(update_fields=["status"])
+
+        rejected_response = self.client.get("/api/v1/favorites/")
+        self.assertEqual(rejected_response.status_code, status.HTTP_200_OK)
+        self.assertEqual(rejected_response.data["count"], 0)
+
+    def test_rejected_own_ad_is_not_returned_in_saved_ads(self):
+        self.listing.seller = self.buyer
+        self.listing.status = Listing.STATUS_REJECTED
+        self.listing.save(update_fields=["seller", "status"])
+        Favorite.objects.create(user=self.buyer, listing=self.listing)
+
+        response = self.client.get("/api/v1/favorites/")
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["count"], 0)

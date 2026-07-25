@@ -145,6 +145,41 @@ class ListingLifecycleTests(APITestCase):
         self.assertIn("at least 10 characters", str(serializer.errors["title"][0]))
         self.assertIn("at least 30 characters", str(serializer.errors["description"][0]))
 
+    def test_refurbished_is_a_valid_ad_condition(self):
+        serializer = ListingCreateUpdateSerializer(
+            data={
+                "category": self.category.id,
+                "city": self.city.id,
+                "title": "Professionally refurbished phone",
+                "description": "Professionally restored, fully tested, and ready for a new owner.",
+                "price": "450000",
+                "currency": "UGX",
+                "condition": Listing.CONDITION_REFURBISHED,
+            }
+        )
+
+        self.assertTrue(serializer.is_valid(), serializer.errors)
+
+    def test_styled_unicode_ad_copy_is_normalized(self):
+        serializer = ListingCreateUpdateSerializer(
+            data={
+                "category": self.category.id,
+                "city": self.city.id,
+                "title": "𝐁𝐫𝐚𝐧𝐝 𝐧𝐞𝐰 𝐬𝐦𝐚𝐫𝐭𝐩𝐡𝐨𝐧𝐞",
+                "description": "𝐅𝐮𝐥𝐥𝐲 𝐭𝐞𝐬𝐭𝐞𝐝 𝐩𝐡𝐨𝐧𝐞 𝐰𝐢𝐭𝐡 𝐚𝐥𝐥 𝐭𝐡𝐞 𝐨𝐫𝐢𝐠𝐢𝐧𝐚𝐥 𝐚𝐜𝐜𝐞𝐬𝐬𝐨𝐫𝐢𝐞𝐬.",
+                "price": "450000",
+                "currency": "UGX",
+                "condition": Listing.CONDITION_USED,
+            }
+        )
+
+        self.assertTrue(serializer.is_valid(), serializer.errors)
+        self.assertEqual(serializer.validated_data["title"], "Brand new smartphone")
+        self.assertEqual(
+            serializer.validated_data["description"],
+            "Fully tested phone with all the original accessories.",
+        )
+
     def test_mine_filter_requires_authentication(self):
         self.create_listing()
 
@@ -354,8 +389,13 @@ class ListingLifecycleTests(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
         self.assertEqual(listing.status, Listing.STATUS_DELETED)
 
-    def test_refurbished_condition_is_rejected(self):
+    def test_refurbished_condition_can_be_posted(self):
         self.authenticate_owner()
+        staged_response = self.client.post(
+            "/api/v1/listings/images/stage/",
+            {"image": self.make_image("refurbished-item.png")},
+            format="multipart",
+        )
 
         response = self.client.post(
             "/api/v1/listings/",
@@ -363,15 +403,16 @@ class ListingLifecycleTests(APITestCase):
                 "category": self.category.id,
                 "city": self.city.id,
                 "title": "Unsupported condition",
-                "description": "This should not pass model choice validation.",
+                "description": "Professionally restored, tested, and ready for a new owner.",
                 "price": "1000.00",
-                "condition": "refurbished",
+                "condition": Listing.CONDITION_REFURBISHED,
+                "staged_image_ids": [staged_response.data["id"]],
             },
             format="json",
         )
 
-        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
-        self.assertIn("condition", response.data)
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data["condition"], Listing.CONDITION_REFURBISHED)
 
     def test_feature_expiry_command_only_clears_promotion(self):
         listing = self.create_listing(

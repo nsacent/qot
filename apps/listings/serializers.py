@@ -1,4 +1,5 @@
 from datetime import timedelta
+import unicodedata
 
 from django.utils import timezone
 from PIL import Image
@@ -6,6 +7,15 @@ from rest_framework import serializers
 
 from .image_processing import MIN_IMAGE_SIZE
 from .models import Listing, ListingDraft, ListingImage, ListingAttribute, PendingListingImage
+
+
+def normalize_listing_text(value):
+    normalized = unicodedata.normalize("NFKC", value)
+    return "".join(
+        character
+        for character in normalized
+        if unicodedata.category(character) != "Cf"
+    )
 
 
 class ListingImageSerializer(serializers.ModelSerializer):
@@ -470,7 +480,7 @@ class ListingCreateUpdateSerializer(serializers.ModelSerializer):
         return value
 
     def validate_title(self, value):
-        value = value.strip()
+        value = " ".join(normalize_listing_text(value).split())
         if len(value) < 10:
             raise serializers.ValidationError(
                 "Ad title must be at least 10 characters."
@@ -478,7 +488,7 @@ class ListingCreateUpdateSerializer(serializers.ModelSerializer):
         return value
 
     def validate_description(self, value):
-        value = value.strip()
+        value = normalize_listing_text(value).strip()
         if len(value) < 30:
             raise serializers.ValidationError(
                 "Ad description must be at least 30 characters."

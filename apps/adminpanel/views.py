@@ -1,3 +1,5 @@
+import logging
+
 from django.db.models import Count, Sum, Q
 from django.http import FileResponse
 from rest_framework import generics, permissions, status
@@ -60,6 +62,28 @@ from apps.notifications.services import (
     create_payment_paid_notification,
     create_payment_failed_notification,
 )
+
+
+logger = logging.getLogger(__name__)
+
+
+def _finish_listing_rejection(listing):
+    """Run non-critical rejection follow-ups without undoing moderation."""
+    try:
+        create_listing_rejected_notification(listing)
+    except Exception:
+        logger.exception(
+            "Unable to notify seller about rejected listing %s",
+            listing.pk,
+        )
+
+    try:
+        calculate_user_trust_score(listing.seller)
+    except Exception:
+        logger.exception(
+            "Unable to recalculate trust score after rejecting listing %s",
+            listing.pk,
+        )
 
 
 def _backup_actor(user):
@@ -582,8 +606,7 @@ class RejectListingAPIView(APIView):
             ]
         )
 
-        create_listing_rejected_notification(listing)
-        calculate_user_trust_score(listing.seller)
+        _finish_listing_rejection(listing)
 
         return Response(
             {

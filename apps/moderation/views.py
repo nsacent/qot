@@ -1,3 +1,6 @@
+import logging
+
+from django.db import transaction
 from django.utils import timezone
 from rest_framework import generics, permissions, status
 from rest_framework.response import Response
@@ -12,6 +15,7 @@ from apps.notifications.services import (
     notify_admins_new_report,
 )
 from apps.adminpanel.permissions import IsAdminOrModerator
+from apps.accounts.trust import calculate_user_trust_score
 
 from .models import ListingReport
 from .serializers import (
@@ -20,6 +24,27 @@ from .serializers import (
     ResolveReportSerializer,
     RejectReportedListingSerializer,
 )
+
+
+logger = logging.getLogger(__name__)
+
+
+def _finish_reported_listing_rejection(listing):
+    try:
+        create_listing_rejected_notification(listing)
+    except Exception:
+        logger.exception(
+            "Unable to notify seller about rejected reported listing %s",
+            listing.pk,
+        )
+
+    try:
+        calculate_user_trust_score(listing.seller)
+    except Exception:
+        logger.exception(
+            "Unable to recalculate trust score after rejecting reported listing %s",
+            listing.pk,
+        )
 
 
 class ListingReportCreateAPIView(APIView):
@@ -186,6 +211,7 @@ class RejectReportedListingAPIView(APIView):
         IsAdminOrModerator,
     ]
 
+    @transaction.atomic
     def post(self, request, pk):
         try:
             report = ListingReport.objects.select_related("listing").get(pk=pk)
@@ -201,14 +227,24 @@ class RejectReportedListingAPIView(APIView):
         listing = report.listing
         listing.status = Listing.STATUS_REJECTED
         listing.rejection_reason = serializer.validated_data["rejection_reason"]
-        listing.save(update_fields=["status", "rejection_reason", "updated_at"])
+        listing.is_featured = False
+        listing.featured_until = None
+        listing.save(
+            update_fields=[
+                "status",
+                "rejection_reason",
+                "is_featured",
+                "featured_until",
+                "updated_at",
+            ]
+        )
 
         report.is_resolved = True
         report.resolved_by = request.user
         report.resolved_at = timezone.now()
         report.save(update_fields=["is_resolved", "resolved_by", "resolved_at"])
 
-        create_listing_rejected_notification(listing)
+        _finish_reported_listing_rejection(listing)
 
         return Response(
             {
