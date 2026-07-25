@@ -19,6 +19,7 @@ from apps.locations.models import City, Region
 from .models import (
     ChatMessage,
     ChatMessageAttachment,
+    ChatBlock,
     ChatReport,
     ChatThread,
     ChatThreadParticipantState,
@@ -365,6 +366,31 @@ class ChatDeliveryTests(APITestCase):
         seller_threads = self.client.get("/api/v1/chats/threads/")
         self.assertEqual(seller_threads.data["results"][0]["id"], thread.id)
 
+    def test_thread_returns_the_current_users_block_state(self):
+        thread = ChatThread.objects.create(
+            listing=self.listing,
+            buyer=self.buyer,
+            seller=self.seller,
+        )
+
+        initial = self.client.get(f"/api/v1/chats/threads/{thread.id}/")
+        self.assertEqual(initial.status_code, status.HTTP_200_OK)
+        self.assertFalse(initial.data["blocked_by_me"])
+
+        ChatBlock.objects.create(
+            thread=thread,
+            blocker=self.buyer,
+            blocked_user=self.seller,
+            is_active=True,
+        )
+
+        blocked = self.client.get(f"/api/v1/chats/threads/{thread.id}/")
+        self.assertTrue(blocked.data["blocked_by_me"])
+
+        self.client.force_authenticate(self.seller)
+        other_participant = self.client.get(f"/api/v1/chats/threads/{thread.id}/")
+        self.assertFalse(other_participant.data["blocked_by_me"])
+
     @patch("apps.chats.views.broadcast_chat_message_deleted")
     def test_sender_can_delete_one_message_but_recipient_cannot(self, broadcast_mock):
         thread = ChatThread.objects.create(
@@ -436,6 +462,116 @@ class ChatDeliveryTests(APITestCase):
         self.assertEqual(ChatMessage.objects.get(pk=response.data["id"]).reply_to, original)
         notification_mock.assert_called_once()
         broadcast_mock.assert_called_once()
+
+    @patch("apps.chats.views.broadcast_chat_message")
+    @patch("apps.chats.views.create_message_notification")
+    def test_buyer_can_send_a_structured_price_offer(
+        self,
+        notification_mock,
+        broadcast_mock,
+    ):
+        thread = ChatThread.objects.create(
+            listing=self.listing,
+            buyer=self.buyer,
+            seller=self.seller,
+        )
+
+        response = self.client.post(
+            f"/api/v1/chats/threads/{thread.id}/messages/",
+            {
+                "message_type": "offer",
+                "offer_amount": "210000.00",
+                "body": "I can collect it today.",
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data["message_type"], ChatMessage.TYPE_OFFER)
+        self.assertEqual(response.data["offer_amount"], "210000.00")
+        self.assertEqual(response.data["offer_status"], ChatMessage.OFFER_PENDING)
+        thread.refresh_from_db()
+        self.assertEqual(thread.last_message, "Offer: UGX 210,000")
+        notification_mock.assert_called_once()
+        broadcast_mock.assert_called_once()
+
+    @patch("apps.chats.views.create_offer_status_notification")
+    @patch("apps.chats.views.broadcast_chat_message")
+    def test_seller_can_accept_a_pending_offer(
+        self,
+        broadcast_mock,
+        notification_mock,
+    ):
+        thread = ChatThread.objects.create(
+            listing=self.listing,
+            buyer=self.buyer,
+            seller=self.seller,
+        )
+        offer = ChatMessage.objects.create(
+            thread=thread,
+            sender=self.buyer,
+            message_type=ChatMessage.TYPE_OFFER,
+            offer_amount="210000.00",
+            offer_status=ChatMessage.OFFER_PENDING,
+        )
+        thread.last_message = "Offer: UGX 210,000"
+        thread.last_message_at = offer.created_at
+        thread.save(update_fields=["last_message", "last_message_at"])
+        self.client.force_authenticate(self.seller)
+
+        response = self.client.post(
+            f"/api/v1/chats/threads/{thread.id}/messages/{offer.id}/offer/",
+            {"action": "accept"},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["offer_status"], ChatMessage.OFFER_ACCEPTED)
+        offer.refresh_from_db()
+        thread.refresh_from_db()
+        self.assertEqual(offer.offer_status, ChatMessage.OFFER_ACCEPTED)
+        self.assertEqual(thread.last_message, "Offer accepted: UGX 210,000")
+        broadcast_mock.assert_called_once()
+        notification_mock.assert_called_once_with(thread, offer)
+
+    @patch("apps.chats.views.create_offer_status_notification")
+    @patch("apps.chats.views.broadcast_chat_message")
+    def test_offer_actions_are_limited_to_the_correct_participant(
+        self,
+        broadcast_mock,
+        notification_mock,
+    ):
+        thread = ChatThread.objects.create(
+            listing=self.listing,
+            buyer=self.buyer,
+            seller=self.seller,
+        )
+        offer = ChatMessage.objects.create(
+            thread=thread,
+            sender=self.buyer,
+            message_type=ChatMessage.TYPE_OFFER,
+            offer_amount="200000.00",
+            offer_status=ChatMessage.OFFER_PENDING,
+        )
+
+        buyer_accept = self.client.post(
+            f"/api/v1/chats/threads/{thread.id}/messages/{offer.id}/offer/",
+            {"action": "accept"},
+            format="json",
+        )
+        self.client.force_authenticate(self.seller)
+        seller_withdraw = self.client.post(
+            f"/api/v1/chats/threads/{thread.id}/messages/{offer.id}/offer/",
+            {"action": "withdraw"},
+            format="json",
+        )
+
+        self.assertEqual(buyer_accept.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertEqual(seller_withdraw.status_code, status.HTTP_403_FORBIDDEN)
+        offer.refresh_from_db()
+        self.assertEqual(offer.offer_status, ChatMessage.OFFER_PENDING)
+        broadcast_mock.assert_not_called()
+        notification_mock.assert_not_called()
 
     @patch("apps.chats.views.broadcast_chat_message")
     @patch("apps.chats.views.create_message_notification")

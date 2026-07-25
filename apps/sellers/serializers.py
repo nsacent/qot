@@ -127,10 +127,11 @@ class PublicSellerSerializer(serializers.ModelSerializer):
 class SellerFollowUserSerializer(serializers.ModelSerializer):
     avatar = serializers.SerializerMethodField()
     business_name = serializers.CharField(source="profile.business_name", read_only=True)
+    is_following = serializers.SerializerMethodField()
 
     class Meta:
         model = User
-        fields = ["id", "full_name", "business_name", "avatar"]
+        fields = ["id", "full_name", "business_name", "avatar", "is_following"]
 
     def get_avatar(self, obj):
         profile = getattr(obj, "profile", None)
@@ -140,6 +141,17 @@ class SellerFollowUserSerializer(serializers.ModelSerializer):
 
         request = self.context.get("request")
         return request.build_absolute_uri(profile.avatar.url) if request else profile.avatar.url
+
+    def get_is_following(self, obj):
+        annotated_value = getattr(obj, "is_following_value", None)
+        if annotated_value is not None:
+            return bool(annotated_value)
+
+        request = self.context.get("request")
+        if not request or not request.user.is_authenticated:
+            return False
+
+        return obj.follower_relationships.filter(follower=request.user).exists()
 
 class PublicSellerListingSerializer(serializers.ModelSerializer):
     category_name = serializers.CharField(source="category.name", read_only=True)
@@ -179,3 +191,17 @@ class PublicSellerListingSerializer(serializers.ModelSerializer):
             return request.build_absolute_uri(image.image.url)
 
         return image.image.url
+
+
+class FollowingFeedListingSerializer(PublicSellerListingSerializer):
+    feed_seller = serializers.SerializerMethodField()
+
+    class Meta(PublicSellerListingSerializer.Meta):
+        fields = [*PublicSellerListingSerializer.Meta.fields, "feed_seller"]
+
+    def get_feed_seller(self, obj):
+        obj.seller.is_following_value = True
+        return SellerFollowUserSerializer(
+            obj.seller,
+            context=self.context,
+        ).data

@@ -4,7 +4,7 @@ from .views import (
     RecentSearchListCreateAPIView,
     ClearRecentSearchesAPIView,
     SavedSearchListCreateAPIView,
-    SavedSearchDeleteAPIView,
+    SavedSearchDetailAPIView,
 )
 
 
@@ -29,7 +29,7 @@ urlpatterns = [
     ),
     path(
         "saved/<int:pk>/",
-        SavedSearchDeleteAPIView.as_view(),
-        name="delete_saved_search",
+        SavedSearchDetailAPIView.as_view(),
+        name="saved_search_detail",
     ),
 ]

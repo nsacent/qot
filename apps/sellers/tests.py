@@ -72,12 +72,65 @@ class SellerFollowTests(APITestCase):
 
         self.assertEqual(followers_response.data["results"][0]["id"], self.follower.id)
         self.assertEqual(following_response.data["results"][0]["id"], self.seller.id)
+        self.assertFalse(followers_response.data["results"][0]["is_following"])
+        self.assertTrue(following_response.data["results"][0]["is_following"])
 
         delete_response = self.client.delete(
             f"/api/v1/sellers/{self.seller.id}/follow/"
         )
         self.assertEqual(delete_response.status_code, status.HTTP_200_OK)
         self.assertFalse(UserFollow.objects.exists())
+
+    def test_following_feed_returns_only_active_ads_from_followed_sellers(self):
+        region = Region.objects.create(name="Feed Region", slug="feed-region")
+        city = City.objects.create(region=region, name="Feed City", slug="feed-city")
+        category = Category.objects.create(name="Feed Category", slug="feed-category")
+        UserFollow.objects.create(follower=self.follower, following=self.seller)
+
+        active_listing = Listing.objects.create(
+            seller=self.seller,
+            category=category,
+            city=city,
+            title="Active followed seller advert",
+            slug="active-followed-seller-advert",
+            description="An active advert that belongs in the following feed.",
+            price="150000.00",
+            status=Listing.STATUS_ACTIVE,
+        )
+        Listing.objects.create(
+            seller=self.seller,
+            category=category,
+            city=city,
+            title="Pending followed seller advert",
+            slug="pending-followed-seller-advert",
+            description="A pending advert that must stay out of the following feed.",
+            price="120000.00",
+            status=Listing.STATUS_PENDING,
+        )
+        other_seller = User.objects.create_user(
+            phone="+256700009099",
+            email="not-followed@example.com",
+            full_name="Not Followed",
+            password="test-password",
+            is_verified=True,
+        )
+        Listing.objects.create(
+            seller=other_seller,
+            category=category,
+            city=city,
+            title="Active seller not followed advert",
+            slug="active-not-followed-advert",
+            description="An active advert from a seller the user does not follow.",
+            price="175000.00",
+            status=Listing.STATUS_ACTIVE,
+        )
+
+        response = self.client.get("/api/v1/sellers/following-feed/")
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["count"], 1)
+        self.assertEqual(response.data["results"][0]["id"], active_listing.id)
+        self.assertEqual(response.data["results"][0]["feed_seller"]["id"], self.seller.id)
 
     def test_public_seller_directory_only_shows_sellers_with_active_ads(self):
         region = Region.objects.create(name="Central Test", slug="central-test")

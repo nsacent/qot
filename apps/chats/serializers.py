@@ -56,6 +56,8 @@ class ChatMessageSerializer(serializers.ModelSerializer):
             "sender_phone",
             "message_type",
             "body",
+            "offer_amount",
+            "offer_status",
             "image",
             "attachments",
             "reply_to",
@@ -68,6 +70,7 @@ class ChatMessageSerializer(serializers.ModelSerializer):
             "id",
             "thread",
             "sender",
+            "offer_status",
             "reply_to_message",
             "is_read",
             "read_at",
@@ -82,12 +85,15 @@ class ChatMessageSerializer(serializers.ModelSerializer):
 
         body = str(replied_message.body or "").strip()
         if not body:
-            first_attachment = replied_message.attachments.first()
-            body = (
-                first_attachment.original_name
-                if first_attachment
-                else "Attachment"
-            )
+            if replied_message.message_type == ChatMessage.TYPE_OFFER:
+                body = f"Offer: UGX {replied_message.offer_amount:,.0f}"
+            else:
+                first_attachment = replied_message.attachments.first()
+                body = (
+                    first_attachment.original_name
+                    if first_attachment
+                    else "Attachment"
+                )
 
         return {
             "id": replied_message.id,
@@ -112,6 +118,7 @@ class ChatThreadSerializer(serializers.ModelSerializer):
     is_archived = serializers.SerializerMethodField()
     is_spam = serializers.SerializerMethodField()
     is_marked_unread = serializers.SerializerMethodField()
+    blocked_by_me = serializers.SerializerMethodField()
 
     class Meta:
         model = ChatThread
@@ -137,6 +144,7 @@ class ChatThreadSerializer(serializers.ModelSerializer):
             "is_archived",
             "is_spam",
             "is_marked_unread",
+            "blocked_by_me",
             "is_active",
             "created_at",
         ]
@@ -237,6 +245,26 @@ class ChatThreadSerializer(serializers.ModelSerializer):
     def get_is_marked_unread(self, obj):
         return self._state_value(obj, "user_marked_unread", "is_marked_unread")
 
+    def get_blocked_by_me(self, obj):
+        request = self.context.get("request")
+
+        if not request or not request.user.is_authenticated:
+            return False
+
+        if hasattr(obj, "user_blocked_other"):
+            return bool(obj.user_blocked_other)
+
+        other_user = self._other_user(obj)
+        if not other_user:
+            return False
+
+        return ChatBlock.objects.filter(
+            thread=obj,
+            blocker=request.user,
+            blocked_user=other_user,
+            is_active=True,
+        ).exists()
+
 
 class ChatThreadCreateSerializer(serializers.Serializer):
     listing_id = serializers.IntegerField()
@@ -295,6 +323,7 @@ class ChatMessageCreateSerializer(serializers.ModelSerializer):
         fields = [
             "message_type",
             "body",
+            "offer_amount",
             "image",
             "reply_to",
         ]
@@ -303,6 +332,7 @@ class ChatMessageCreateSerializer(serializers.ModelSerializer):
         message_type = attrs.get("message_type", ChatMessage.TYPE_TEXT)
         body = attrs.get("body")
         image = attrs.get("image")
+        offer_amount = attrs.get("offer_amount")
         reply_to = attrs.get("reply_to")
 
         if message_type == ChatMessage.TYPE_TEXT and not body:
@@ -315,6 +345,23 @@ class ChatMessageCreateSerializer(serializers.ModelSerializer):
                 {"image": "Image is required for image messages."}
             )
 
+        if message_type == ChatMessage.TYPE_OFFER:
+            if offer_amount is None or offer_amount <= 0:
+                raise serializers.ValidationError(
+                    {"offer_amount": "Enter an offer amount greater than zero."}
+                )
+
+            thread = self.context.get("thread")
+            request = self.context.get("request")
+            if thread and request and request.user.id != thread.buyer_id:
+                raise serializers.ValidationError(
+                    {"message_type": "Only the buyer can make an offer."}
+                )
+        elif offer_amount is not None:
+            raise serializers.ValidationError(
+                {"offer_amount": "Offer amount is only valid for offer messages."}
+            )
+
         thread = self.context.get("thread")
         if reply_to and thread and reply_to.thread_id != thread.id:
             raise serializers.ValidationError(
@@ -322,6 +369,18 @@ class ChatMessageCreateSerializer(serializers.ModelSerializer):
             )
 
         return attrs
+
+    def create(self, validated_data):
+        if validated_data.get("message_type") == ChatMessage.TYPE_OFFER:
+            validated_data["offer_status"] = ChatMessage.OFFER_PENDING
+
+        return super().create(validated_data)
+
+
+class ChatOfferActionSerializer(serializers.Serializer):
+    action = serializers.ChoiceField(
+        choices=["accept", "decline", "withdraw"],
+    )
 
 
 

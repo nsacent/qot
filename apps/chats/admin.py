@@ -10,6 +10,8 @@ class ChatMessageInline(admin.TabularInline):
         "sender",
         "message_type",
         "body",
+        "offer_amount",
+        "offer_status",
         "image",
         "is_read",
         "read_at",
@@ -64,12 +66,15 @@ class ChatMessageAdmin(admin.ModelAdmin):
         "thread",
         "sender",
         "message_type",
+        "offer_amount",
+        "offer_status",
         "is_read",
         "created_at",
     ]
 
     list_filter = [
         "message_type",
+        "offer_status",
         "is_read",
         "created_at",
     ]

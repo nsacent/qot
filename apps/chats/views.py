@@ -1,6 +1,6 @@
 from django.db import transaction
 from django.http import FileResponse, Http404
-from django.db.models import BooleanField, Count, OuterRef, Q, Subquery, Value
+from django.db.models import BooleanField, Count, Exists, OuterRef, Q, Subquery, Value
 from django.db.models.functions import Coalesce
 from django.utils import timezone
 
@@ -24,6 +24,7 @@ from .serializers import (
     ChatThreadCreateSerializer,
     ChatMessageSerializer,
     ChatMessageCreateSerializer,
+    ChatOfferActionSerializer,
     ChatAttachmentUploadSerializer,
     ChatBlockCreateSerializer,
     ChatBlockSerializer,
@@ -32,7 +33,10 @@ from .serializers import (
     ChatThreadStateUpdateSerializer,
 )
 
-from apps.notifications.services import create_message_notification
+from apps.notifications.services import (
+    create_message_notification,
+    create_offer_status_notification,
+)
 
 from apps.common.permissions import IsNotBanned, IsVerifiedUser
 
@@ -56,6 +60,11 @@ def chat_threads_for_user(user):
     participant_state = ChatThreadParticipantState.objects.filter(
         thread_id=OuterRef("pk"),
         user=user,
+    )
+    active_blocks_by_user = ChatBlock.objects.filter(
+        thread_id=OuterRef("pk"),
+        blocker=user,
+        is_active=True,
     )
 
     return (
@@ -107,6 +116,7 @@ def chat_threads_for_user(user):
                 Value(False),
                 output_field=BooleanField(),
             ),
+            user_blocked_other=Exists(active_blocks_by_user),
         )
         .filter(user_is_deleted=False)
         .order_by("-last_message_at", "-created_at")
@@ -188,8 +198,20 @@ def get_other_chat_participant(thread, user):
     return None
 
 
+def chat_message_preview(message):
+    if message.message_type == ChatMessage.TYPE_OFFER and message.offer_amount is not None:
+        status_label = {
+            ChatMessage.OFFER_ACCEPTED: "Offer accepted",
+            ChatMessage.OFFER_DECLINED: "Offer declined",
+            ChatMessage.OFFER_WITHDRAWN: "Offer withdrawn",
+        }.get(message.offer_status, "Offer")
+        return f"{status_label}: UGX {message.offer_amount:,.0f}"
+
+    return message.body or "[Attachment]"
+
+
 def deliver_chat_message(thread, message, preview=None):
-    thread.last_message = preview or message.body or "[Attachment]"
+    thread.last_message = preview or chat_message_preview(message)
     thread.last_message_at = message.created_at
 
     if message.sender_id == thread.buyer_id:
@@ -570,7 +592,7 @@ class ChatMessageListCreateAPIView(generics.ListCreateAPIView):
         deliver_chat_message(
             thread,
             message,
-            preview=message.body or "[Image]",
+            preview=chat_message_preview(message),
         )
 
         message_data = ChatMessageSerializer(
@@ -646,7 +668,7 @@ class ChatMessageDetailAPIView(APIView):
         if was_last_message:
             latest = thread.messages.order_by("-created_at").prefetch_related("attachments").first()
             if latest:
-                thread.last_message = latest.body or "[Attachment]"
+                thread.last_message = chat_message_preview(latest)
                 thread.last_message_at = latest.created_at
             else:
                 thread.last_message = ""
@@ -658,6 +680,95 @@ class ChatMessageDetailAPIView(APIView):
 
         broadcast_chat_message_deleted(thread, message_id)
         return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class ChatOfferActionAPIView(APIView):
+    permission_classes = [
+        permissions.IsAuthenticated,
+        IsNotBanned,
+        IsVerifiedUser,
+    ]
+
+    @transaction.atomic
+    def post(self, request, thread_id, message_id):
+        try:
+            thread = ChatThread.objects.select_for_update().get(
+                pk=thread_id,
+                is_active=True,
+            )
+        except ChatThread.DoesNotExist:
+            return Response(
+                {"detail": "Chat thread not found."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        if request.user.id not in {thread.buyer_id, thread.seller_id}:
+            return Response(
+                {"detail": "You are not part of this chat thread."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        try:
+            offer = (
+                ChatMessage.objects
+                .select_for_update()
+                .select_related("sender")
+                .prefetch_related("attachments")
+                .get(
+                    pk=message_id,
+                    thread=thread,
+                    message_type=ChatMessage.TYPE_OFFER,
+                )
+            )
+        except ChatMessage.DoesNotExist:
+            return Response(
+                {"detail": "Offer not found."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        serializer = ChatOfferActionSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        action = serializer.validated_data["action"]
+
+        if offer.offer_status != ChatMessage.OFFER_PENDING:
+            return Response(
+                {"detail": "This offer has already been resolved."},
+                status=status.HTTP_409_CONFLICT,
+            )
+
+        if action in {"accept", "decline"}:
+            if request.user.id != thread.seller_id:
+                return Response(
+                    {"detail": "Only the seller can accept or decline an offer."},
+                    status=status.HTTP_403_FORBIDDEN,
+                )
+            offer.offer_status = (
+                ChatMessage.OFFER_ACCEPTED
+                if action == "accept"
+                else ChatMessage.OFFER_DECLINED
+            )
+        else:
+            if request.user.id != thread.buyer_id or request.user.id != offer.sender_id:
+                return Response(
+                    {"detail": "Only the buyer who made this offer can withdraw it."},
+                    status=status.HTTP_403_FORBIDDEN,
+                )
+            offer.offer_status = ChatMessage.OFFER_WITHDRAWN
+
+        offer.save(update_fields=["offer_status"])
+
+        if thread.last_message_at == offer.created_at:
+            thread.last_message = chat_message_preview(offer)
+            thread.save(update_fields=["last_message"])
+
+        message_data = ChatMessageSerializer(
+            offer,
+            context={"request": request},
+        ).data
+        broadcast_chat_message(thread, message_data)
+        create_offer_status_notification(thread, offer)
+
+        return Response(message_data, status=status.HTTP_200_OK)
 
 
 class ChatMarkReadAPIView(APIView):

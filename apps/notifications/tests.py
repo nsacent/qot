@@ -1,11 +1,13 @@
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from django.core import mail
 from django.test import TestCase, override_settings
+from rest_framework import status
+from rest_framework.test import APITestCase
 
 from apps.accounts.models import User
 
-from .models import Notification
+from .models import Notification, PushDevice
 from .services import create_notification
 
 
@@ -69,6 +71,74 @@ class NotificationPreferenceServiceTests(TestCase):
         self.assertEqual(mail.outbox[0].to, [self.user.email])
         self.assertIn(notification.title, mail.outbox[0].subject)
         self.assertIn("A buyer saved your ad.", mail.outbox[0].body)
+
+    @override_settings(EMAIL_BACKEND="django.core.mail.backends.locmem.EmailBackend")
+    @patch("apps.notifications.services.requests.post")
+    @patch("apps.notifications.services.broadcast_notification")
+    def test_created_notification_is_sent_to_registered_devices(self, broadcast, post):
+        PushDevice.objects.create(
+            user=self.user,
+            expo_push_token="ExponentPushToken[test-device]",
+            platform=PushDevice.PLATFORM_ANDROID,
+        )
+        response = MagicMock()
+        response.json.return_value = {"data": [{"status": "ok", "id": "ticket-1"}]}
+        post.return_value = response
+
+        with self.captureOnCommitCallbacks(execute=True):
+            notification = create_notification(
+                user=self.user,
+                notification_type=Notification.TYPE_MESSAGE,
+                title="New message",
+                message="A buyer replied to your ad.",
+            )
+
+        payload = post.call_args.kwargs["json"][0]
+        self.assertEqual(payload["to"], "ExponentPushToken[test-device]")
+        self.assertEqual(payload["data"]["notification_id"], notification.id)
+        self.assertEqual(payload["data"]["url"], "qot://notifications")
+        self.assertEqual(payload["badge"], 1)
+
+
+class PushDeviceAPITests(APITestCase):
+    def setUp(self):
+        self.user = User.objects.create_user(
+            phone="+256700003010",
+            email="push-device@example.com",
+            full_name="Push Device User",
+            password="test-password",
+        )
+        self.client.force_authenticate(self.user)
+
+    def test_device_can_be_registered_and_disabled(self):
+        payload = {
+            "expo_push_token": "ExponentPushToken[registered-device]",
+            "platform": "android",
+            "device_id": "physical-phone",
+        }
+        registered = self.client.post(
+            "/api/v1/notifications/devices/",
+            payload,
+            format="json",
+        )
+        self.assertEqual(registered.status_code, status.HTTP_201_CREATED)
+        self.assertTrue(PushDevice.objects.get(user=self.user).is_active)
+
+        disabled = self.client.delete(
+            "/api/v1/notifications/devices/",
+            {"expo_push_token": payload["expo_push_token"]},
+            format="json",
+        )
+        self.assertEqual(disabled.status_code, status.HTTP_204_NO_CONTENT)
+        self.assertFalse(PushDevice.objects.get(user=self.user).is_active)
+
+    def test_invalid_push_token_is_rejected(self):
+        response = self.client.post(
+            "/api/v1/notifications/devices/",
+            {"expo_push_token": "not-a-token", "platform": "android"},
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
 
 
 class AdminNotificationEmailTests(TestCase):

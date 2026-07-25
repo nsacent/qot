@@ -1,5 +1,5 @@
 from django.shortcuts import get_object_or_404
-from django.db.models import Avg, Count, IntegerField, OuterRef, Q, Subquery, Sum, Value
+from django.db.models import Avg, BooleanField, Count, Exists, IntegerField, OuterRef, Q, Subquery, Sum, Value
 from django.db.models.functions import Coalesce
 from rest_framework import generics, permissions, status
 from rest_framework.response import Response
@@ -12,8 +12,32 @@ from apps.notifications.services import create_follow_notification
 from .serializers import (
     PublicSellerSerializer,
     PublicSellerListingSerializer,
+    FollowingFeedListingSerializer,
     SellerFollowUserSerializer,
 )
+
+
+class FollowingFeedAPIView(generics.ListAPIView):
+    serializer_class = FollowingFeedListingSerializer
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_queryset(self):
+        followed_seller_ids = UserFollow.objects.filter(
+            follower=self.request.user,
+            following__is_active=True,
+            following__is_banned=False,
+        ).values("following_id")
+
+        return (
+            Listing.objects
+            .filter(
+                seller_id__in=followed_seller_ids,
+                status=Listing.STATUS_ACTIVE,
+            )
+            .select_related("seller", "seller__profile", "category", "city")
+            .prefetch_related("images")
+            .order_by("-is_featured", "-created_at")
+        )
 
 
 class PublicSellerListAPIView(generics.ListAPIView):
@@ -190,7 +214,7 @@ class SellerFollowersAPIView(generics.ListAPIView):
             is_active=True,
             is_banned=False,
         )
-        return (
+        queryset = (
             User.objects.filter(
                 following_relationships__following=seller,
                 is_active=True,
@@ -198,6 +222,18 @@ class SellerFollowersAPIView(generics.ListAPIView):
             )
             .select_related("profile")
             .order_by("-following_relationships__created_at")
+        )
+        if self.request.user.is_authenticated:
+            return queryset.annotate(
+                is_following_value=Exists(
+                    UserFollow.objects.filter(
+                        follower=self.request.user,
+                        following_id=OuterRef("pk"),
+                    )
+                )
+            )
+        return queryset.annotate(
+            is_following_value=Value(False, output_field=BooleanField())
         )
 
 
@@ -212,7 +248,7 @@ class SellerFollowingAPIView(generics.ListAPIView):
             is_active=True,
             is_banned=False,
         )
-        return (
+        queryset = (
             User.objects.filter(
                 follower_relationships__follower=seller,
                 is_active=True,
@@ -220,4 +256,16 @@ class SellerFollowingAPIView(generics.ListAPIView):
             )
             .select_related("profile")
             .order_by("-follower_relationships__created_at")
+        )
+        if self.request.user.is_authenticated:
+            return queryset.annotate(
+                is_following_value=Exists(
+                    UserFollow.objects.filter(
+                        follower=self.request.user,
+                        following_id=OuterRef("pk"),
+                    )
+                )
+            )
+        return queryset.annotate(
+            is_following_value=Value(False, output_field=BooleanField())
         )

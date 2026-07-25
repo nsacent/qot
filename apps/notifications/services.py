@@ -6,8 +6,12 @@ from django.conf import settings
 from django.core.mail import EmailMultiAlternatives
 from django.db import transaction
 from django.db.models import Q
+import requests
 
-from .models import Notification
+from .models import Notification, PushDevice
+
+
+EXPO_PUSH_URL = "https://exp.host/--/api/v2/push/send"
 
 
 def _frontend_url(path):
@@ -88,6 +92,87 @@ def _notification_action(notification):
         return (_frontend_url(f"/ads/{notification.listing_id}"), "View ad")
 
     return (_frontend_url("/account/notifications"), "View notifications")
+
+
+def _notification_app_url(notification):
+    if notification.chat_thread_id:
+        return f"qot://messages/{notification.chat_thread_id}"
+
+    if notification.listing_id:
+        return f"qot://ads/{notification.listing_id}"
+
+    return "qot://notifications"
+
+
+def deliver_notification_push(notification_id):
+    try:
+        notification = Notification.objects.get(pk=notification_id)
+    except Notification.DoesNotExist:
+        return 0
+
+    devices = list(
+        PushDevice.objects.filter(
+            user=notification.user,
+            is_active=True,
+        ).only("id", "expo_push_token")
+    )
+    if not devices:
+        return 0
+
+    delivered = 0
+    app_url = _notification_app_url(notification)
+    unread_count = Notification.objects.filter(
+        user=notification.user,
+        is_read=False,
+    ).count()
+
+    for offset in range(0, len(devices), 100):
+        device_batch = devices[offset:offset + 100]
+        messages = [
+            {
+                "to": device.expo_push_token,
+                "title": notification.title,
+                "body": notification.message,
+                "sound": "default",
+                "priority": "high",
+                "channelId": "qot-updates",
+                "badge": unread_count,
+                "data": {
+                    "url": app_url,
+                    "notification_id": notification.id,
+                    "notification_type": notification.notification_type,
+                },
+            }
+            for device in device_batch
+        ]
+
+        try:
+            response = requests.post(
+                EXPO_PUSH_URL,
+                json=messages,
+                headers={
+                    "Accept": "application/json",
+                    "Content-Type": "application/json",
+                },
+                timeout=8,
+            )
+            response.raise_for_status()
+            tickets = response.json().get("data", [])
+        except (requests.RequestException, ValueError, AttributeError):
+            continue
+
+        invalid_device_ids = []
+        for device, ticket in zip(device_batch, tickets):
+            if ticket.get("status") == "ok":
+                delivered += 1
+                continue
+            if ticket.get("details", {}).get("error") == "DeviceNotRegistered":
+                invalid_device_ids.append(device.id)
+
+        if invalid_device_ids:
+            PushDevice.objects.filter(id__in=invalid_device_ids).update(is_active=False)
+
+    return delivered
 
 
 def deliver_notification_email(notification_id):
@@ -240,6 +325,11 @@ def create_notification(
             notification_id
         )
     )
+    transaction.on_commit(
+        lambda notification_id=notification.pk: deliver_notification_push(
+            notification_id
+        )
+    )
 
     return notification
 
@@ -252,11 +342,57 @@ def create_message_notification(thread, message):
     else:
         recipient = thread.buyer
 
+    if getattr(message, "message_type", "") == "offer" and message.offer_amount is not None:
+        title = "New price offer"
+        notification_message = (
+            f"{sender.full_name} offered UGX {message.offer_amount:,.0f} "
+            f"for '{thread.listing.title}'."
+        )
+    else:
+        title = "New message"
+        notification_message = f"{sender.full_name} sent you a message."
+
     return create_notification(
         user=recipient,
         notification_type=Notification.TYPE_MESSAGE,
-        title="New message",
-        message=f"{sender.full_name} sent you a message.",
+        title=title,
+        message=notification_message,
+        listing=thread.listing,
+        chat_thread=thread,
+        preference_key="messages",
+    )
+
+
+def create_offer_status_notification(thread, offer):
+    status_label = {
+        "accepted": "accepted",
+        "declined": "declined",
+        "withdrawn": "withdrawn",
+    }.get(offer.offer_status)
+
+    if not status_label:
+        return None
+
+    if offer.offer_status == "withdrawn":
+        recipient = thread.seller
+        title = "Offer withdrawn"
+        message = (
+            f"{thread.buyer.full_name} withdrew their UGX {offer.offer_amount:,.0f} "
+            f"offer for '{thread.listing.title}'."
+        )
+    else:
+        recipient = thread.buyer
+        title = f"Offer {status_label}"
+        message = (
+            f"{thread.seller.full_name} {status_label} your UGX {offer.offer_amount:,.0f} "
+            f"offer for '{thread.listing.title}'."
+        )
+
+    return create_notification(
+        user=recipient,
+        notification_type=Notification.TYPE_MESSAGE,
+        title=title,
+        message=message,
         listing=thread.listing,
         chat_thread=thread,
         preference_key="messages",

@@ -1,6 +1,6 @@
 from rest_framework import serializers
 
-from .models import Notification
+from .models import Notification, PushDevice
 
 
 class NotificationSerializer(serializers.ModelSerializer):
@@ -19,6 +19,33 @@ class NotificationSerializer(serializers.ModelSerializer):
             "is_read",
             "created_at",
         ]
+
+
+class PushDeviceSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = PushDevice
+        fields = [
+            "id",
+            "expo_push_token",
+            "platform",
+            "device_id",
+            "is_active",
+            "last_registered_at",
+        ]
+        read_only_fields = [
+            "id",
+            "is_active",
+            "last_registered_at",
+        ]
+
+    def validate_expo_push_token(self, value):
+        token = str(value or "").strip()
+        if not (
+            token.startswith("ExponentPushToken[")
+            or token.startswith("ExpoPushToken[")
+        ) or not token.endswith("]"):
+            raise serializers.ValidationError("Enter a valid Expo push token.")
+        return token
         read_only_fields = [
             "id",
             "notification_type",

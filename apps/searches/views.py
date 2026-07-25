@@ -72,7 +72,7 @@ class SavedSearchListCreateAPIView(generics.ListCreateAPIView):
         serializer.save(user=self.request.user)
 
 
-class SavedSearchDeleteAPIView(generics.DestroyAPIView):
+class SavedSearchDetailAPIView(generics.RetrieveUpdateDestroyAPIView):
     serializer_class = SavedSearchSerializer
     permission_classes = [
         permissions.IsAuthenticated,

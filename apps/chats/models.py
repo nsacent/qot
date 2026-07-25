@@ -90,10 +90,24 @@ class ChatThreadParticipantState(models.Model):
 class ChatMessage(models.Model):
     TYPE_TEXT = "text"
     TYPE_IMAGE = "image"
+    TYPE_OFFER = "offer"
 
     TYPE_CHOICES = [
         (TYPE_TEXT, "Text"),
         (TYPE_IMAGE, "Image"),
+        (TYPE_OFFER, "Offer"),
+    ]
+
+    OFFER_PENDING = "pending"
+    OFFER_ACCEPTED = "accepted"
+    OFFER_DECLINED = "declined"
+    OFFER_WITHDRAWN = "withdrawn"
+
+    OFFER_STATUS_CHOICES = [
+        (OFFER_PENDING, "Pending"),
+        (OFFER_ACCEPTED, "Accepted"),
+        (OFFER_DECLINED, "Declined"),
+        (OFFER_WITHDRAWN, "Withdrawn"),
     ]
 
     thread = models.ForeignKey(
@@ -115,6 +129,20 @@ class ChatMessage(models.Model):
     )
 
     body = models.TextField(null=True, blank=True)
+
+    offer_amount = models.DecimalField(
+        max_digits=14,
+        decimal_places=2,
+        null=True,
+        blank=True,
+    )
+
+    offer_status = models.CharField(
+        max_length=20,
+        choices=OFFER_STATUS_CHOICES,
+        null=True,
+        blank=True,
+    )
 
     image = models.ImageField(
         upload_to="chats/images/",

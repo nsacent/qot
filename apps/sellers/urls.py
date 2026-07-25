@@ -7,6 +7,7 @@ from .views import (
     SellerFollowAPIView,
     SellerFollowersAPIView,
     SellerFollowingAPIView,
+    FollowingFeedAPIView,
 )
 
 
@@ -15,6 +16,7 @@ app_name = "sellers"
 
 urlpatterns = [
     path("", PublicSellerListAPIView.as_view(), name="seller_list"),
+    path("following-feed/", FollowingFeedAPIView.as_view(), name="following_feed"),
     path("<int:seller_id>/", PublicSellerDetailAPIView.as_view(), name="seller_detail"),
     path("<int:seller_id>/listings/", PublicSellerListingListAPIView.as_view(), name="seller_listings"),
     path("<int:seller_id>/follow/", SellerFollowAPIView.as_view(), name="seller_follow"),
