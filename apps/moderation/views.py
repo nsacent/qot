@@ -7,7 +7,10 @@ from django.db.models import Q
 
 from apps.common.permissions import IsNotBanned, IsVerifiedUser
 from apps.listings.models import Listing
-from apps.notifications.services import create_listing_rejected_notification
+from apps.notifications.services import (
+    create_listing_rejected_notification,
+    notify_admins_new_report,
+)
 from apps.adminpanel.permissions import IsAdminOrModerator
 
 from .models import ListingReport
@@ -63,6 +66,7 @@ class ListingReportCreateAPIView(APIView):
             listing=listing,
             reporter=request.user,
         )
+        notify_admins_new_report(report)
 
         return Response(
             ListingReportCreateSerializer(report).data,

@@ -7,13 +7,17 @@ class Notification(models.Model):
     TYPE_LISTING_APPROVED = "listing_approved"
     TYPE_LISTING_REJECTED = "listing_rejected"
     TYPE_LISTING_EXPIRED = "listing_expired"
+    TYPE_FAVORITE = "favorite"
+    TYPE_FOLLOW = "follow"
     TYPE_SYSTEM = "system"
 
     TYPE_CHOICES = [
         (TYPE_MESSAGE, "New Message"),
-        (TYPE_LISTING_APPROVED, "Listing Approved"),
-        (TYPE_LISTING_REJECTED, "Listing Rejected"),
-        (TYPE_LISTING_EXPIRED, "Listing Expired"),
+        (TYPE_LISTING_APPROVED, "Ad Approved"),
+        (TYPE_LISTING_REJECTED, "Ad Rejected"),
+        (TYPE_LISTING_EXPIRED, "Ad Expired"),
+        (TYPE_FAVORITE, "Ad Saved"),
+        (TYPE_FOLLOW, "New Follower"),
         (TYPE_SYSTEM, "System"),
     ]
 

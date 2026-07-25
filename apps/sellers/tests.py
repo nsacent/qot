@@ -1,3 +1,5 @@
+from unittest.mock import patch
+
 from rest_framework import status
 from rest_framework.test import APITestCase
 
@@ -26,7 +28,8 @@ class SellerFollowTests(APITestCase):
         )
         self.client.force_authenticate(self.follower)
 
-    def test_follow_is_idempotent_and_visible_on_profile(self):
+    @patch("apps.sellers.views.create_follow_notification")
+    def test_follow_is_idempotent_and_visible_on_profile(self, notify_follow):
         url = f"/api/v1/sellers/{self.seller.id}/follow/"
 
         first_response = self.client.post(url, {}, format="json")
@@ -41,6 +44,7 @@ class SellerFollowTests(APITestCase):
             ).count(),
             1,
         )
+        notify_follow.assert_called_once()
 
         profile_response = self.client.get(f"/api/v1/sellers/{self.seller.id}/")
         self.assertTrue(profile_response.data["is_following"])

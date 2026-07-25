@@ -1,7 +1,183 @@
+from html import escape
+
 from asgiref.sync import async_to_sync
 from channels.layers import get_channel_layer
+from django.conf import settings
+from django.core.mail import EmailMultiAlternatives
+from django.db import transaction
+from django.db.models import Q
 
 from .models import Notification
+
+
+def _frontend_url(path):
+    return f"{settings.FRONTEND_URL.rstrip('/')}{path}"
+
+
+def _send_branded_email(
+    *,
+    subject,
+    title,
+    message,
+    recipients,
+    action_url="",
+    action_label="Open QOT",
+):
+    recipients = sorted(
+        {
+            str(recipient).strip().lower()
+            for recipient in recipients
+            if str(recipient or "").strip()
+        }
+    )
+
+    if not recipients:
+        return 0
+
+    plain_message = message
+
+    if action_url:
+        plain_message = f"{plain_message}\n\n{action_label}: {action_url}"
+
+    plain_message = f"{plain_message}\n\nQOT Uganda\ninfo@qot.ug | 0200911678"
+    action_markup = ""
+
+    if action_url:
+        action_markup = (
+            '<p style="margin:24px 0 4px">'
+            f'<a href="{escape(action_url, quote=True)}" '
+            'style="display:inline-block;background:#f97316;color:#fff;text-decoration:none;'
+            'font-weight:800;padding:12px 18px;border-radius:12px">'
+            f"{escape(action_label)}</a></p>"
+        )
+
+    html_message = f"""
+        <div style="background:#fff7f2;padding:28px 14px;font-family:Arial,sans-serif;color:#0f172a">
+          <div style="max-width:600px;margin:0 auto;background:#fff;border:1px solid #fed7aa;border-radius:20px;overflow:hidden">
+            <div style="background:#f97316;color:#fff;padding:18px 24px;font-size:22px;font-weight:900">QOT</div>
+            <div style="padding:26px 24px">
+              <h1 style="margin:0;font-size:22px;line-height:1.3">{escape(title)}</h1>
+              <p style="margin:14px 0 0;color:#475569;font-size:15px;line-height:1.7">{escape(message)}</p>
+              {action_markup}
+            </div>
+            <div style="padding:16px 24px;background:#f8fafc;color:#64748b;font-size:12px;line-height:1.6">
+              QOT Uganda · info@qot.ug · 0200911678
+            </div>
+          </div>
+        </div>
+    """
+
+    email = EmailMultiAlternatives(
+        subject=subject,
+        body=plain_message,
+        from_email=settings.DEFAULT_FROM_EMAIL,
+        to=recipients,
+    )
+    email.attach_alternative(html_message, "text/html")
+    return email.send(fail_silently=True)
+
+
+def _notification_action(notification):
+    if notification.chat_thread_id:
+        return (
+            _frontend_url(f"/account/messages/{notification.chat_thread_id}"),
+            "Open conversation",
+        )
+
+    if notification.listing_id:
+        return (_frontend_url(f"/ads/{notification.listing_id}"), "View ad")
+
+    return (_frontend_url("/account/notifications"), "View notifications")
+
+
+def deliver_notification_email(notification_id):
+    try:
+        notification = Notification.objects.select_related("user").get(
+            pk=notification_id
+        )
+    except Notification.DoesNotExist:
+        return 0
+
+    if not notification.user.email:
+        return 0
+
+    action_url, action_label = _notification_action(notification)
+    return _send_branded_email(
+        subject=f"QOT Uganda: {notification.title}",
+        title=notification.title,
+        message=notification.message,
+        recipients=[notification.user.email],
+        action_url=action_url,
+        action_label=action_label,
+    )
+
+
+def _admin_recipients():
+    from apps.accounts.models import User
+
+    configured = getattr(settings, "ADMIN_NOTIFICATION_EMAILS", []) or []
+    database_recipients = (
+        User.objects
+        .filter(is_active=True, email__isnull=False)
+        .filter(
+            Q(role__in=[User.ROLE_ADMIN, User.ROLE_MODERATOR])
+            | Q(is_staff=True)
+            | Q(is_superuser=True)
+        )
+        .values_list("email", flat=True)
+    )
+
+    return [*configured, *database_recipients]
+
+
+def _queue_admin_email(*, subject, title, message, action_path, action_label):
+    transaction.on_commit(
+        lambda: _send_branded_email(
+            subject=subject,
+            title=title,
+            message=message,
+            recipients=_admin_recipients(),
+            action_url=_frontend_url(action_path),
+            action_label=action_label,
+        )
+    )
+
+
+def notify_admins_new_signup(user):
+    contact = user.email or user.phone or "No contact supplied"
+    _queue_admin_email(
+        subject="QOT Uganda: New user signup",
+        title="A new member joined QOT",
+        message=f"{user.full_name} created an account using {contact}.",
+        action_path=f"/admin/users/{user.pk}",
+        action_label="Review user",
+    )
+
+
+def notify_admins_new_listing(listing):
+    _queue_admin_email(
+        subject="QOT Uganda: New ad awaiting review",
+        title="A new ad needs moderation",
+        message=(
+            f"{listing.seller.full_name} submitted '{listing.title}' "
+            "for approval."
+        ),
+        action_path=f"/admin/ads/{listing.pk}",
+        action_label="Review ad",
+    )
+
+
+def notify_admins_new_report(report):
+    _queue_admin_email(
+        subject="QOT Uganda: New safety report",
+        title="An ad was reported",
+        message=(
+            f"{report.reporter.full_name} reported '{report.listing.title}' "
+            f"for {report.get_reason_display().lower()}."
+        ),
+        action_path=f"/admin/reports?listing={report.listing_id}",
+        action_label="Review report",
+    )
 
 
 def broadcast_notification(notification):
@@ -59,6 +235,11 @@ def create_notification(
     )
 
     broadcast_notification(notification)
+    transaction.on_commit(
+        lambda notification_id=notification.pk: deliver_notification_email(
+            notification_id
+        )
+    )
 
     return notification
 
@@ -86,8 +267,8 @@ def create_listing_approved_notification(listing):
     return create_notification(
         user=listing.seller,
         notification_type=Notification.TYPE_LISTING_APPROVED,
-        title="Listing approved",
-        message=f"Your listing '{listing.title}' has been approved and is now live.",
+        title="Ad approved",
+        message=f"Your ad '{listing.title}' has been approved and is now live.",
         listing=listing,
         preference_key="listing_approvals",
     )
@@ -99,8 +280,8 @@ def create_listing_rejected_notification(listing):
     return create_notification(
         user=listing.seller,
         notification_type=Notification.TYPE_LISTING_REJECTED,
-        title="Listing rejected",
-        message=f"Your listing '{listing.title}' was rejected. Reason: {reason}",
+        title="Ad rejected",
+        message=f"Your ad '{listing.title}' was rejected. Reason: {reason}",
         listing=listing,
         preference_key="listing_rejections",
     )
@@ -110,10 +291,42 @@ def create_listing_expired_notification(listing):
     return create_notification(
         user=listing.seller,
         notification_type=Notification.TYPE_LISTING_EXPIRED,
-        title="Listing expired",
-        message=f"Your listing '{listing.title}' has expired. You can renew it to make it active again.",
+        title="Ad expired",
+        message=(
+            f"Your ad '{listing.title}' has expired. "
+            "You can renew it to make it active again."
+        ),
         listing=listing,
         preference_key="renewals",
+    )
+
+
+def create_favorite_notification(favorite):
+    listing = favorite.listing
+
+    if favorite.user_id == listing.seller_id:
+        return None
+
+    return create_notification(
+        user=listing.seller,
+        notification_type=Notification.TYPE_FAVORITE,
+        title="Someone saved your ad",
+        message=(
+            f"{favorite.user.full_name} saved '{listing.title}' "
+            "to their favourites."
+        ),
+        listing=listing,
+        preference_key="favorites",
+    )
+
+
+def create_follow_notification(follow):
+    return create_notification(
+        user=follow.following,
+        notification_type=Notification.TYPE_FOLLOW,
+        title="You have a new follower",
+        message=f"{follow.follower.full_name} started following your QOT profile.",
+        preference_key="followers",
     )
 
 
@@ -142,13 +355,14 @@ def create_payment_failed_notification(payment):
         listing=payment.listing,
     )
 
+
 def create_saved_search_match_notification(user, listing, saved_search):
     return create_notification(
         user=user,
         notification_type=Notification.TYPE_SYSTEM,
-        title="New listing matches your saved search",
+        title="New ad matches your saved search",
         message=(
-            f"A new listing '{listing.title}' matches your saved search "
+            f"A new ad '{listing.title}' matches your saved search "
             f"'{saved_search.name}'."
         ),
         listing=listing,

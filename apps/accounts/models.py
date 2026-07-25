@@ -13,6 +13,8 @@ def default_notification_preferences():
         "messages": True,
         "listing_approvals": True,
         "listing_rejections": True,
+        "favorites": True,
+        "followers": True,
         "reports": True,
         "renewals": True,
         "marketing": False,

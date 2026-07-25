@@ -168,7 +168,7 @@ class PasswordResetRequestTests(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(len(mail.outbox), 1)
         self.assertIn(
-            "https://qot.ug/account/reset-password?uid=",
+            "https://qot.ug/reset-password?uid=",
             mail.outbox[0].body,
         )
 

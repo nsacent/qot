@@ -42,6 +42,7 @@ from datetime import timedelta
 from django.utils import timezone
 
 from apps.searches.alerts import notify_saved_search_matches_for_listing
+from apps.notifications.services import notify_admins_new_listing
 
 
 class ListingListCreateAPIView(generics.ListCreateAPIView):
@@ -239,6 +240,8 @@ class ListingListCreateAPIView(generics.ListCreateAPIView):
             base_slug = slugify(listing.title)
             listing.slug = f"{base_slug}-{listing.id}"
             listing.save(update_fields=["slug"])
+
+        notify_admins_new_listing(listing)
 
         response_serializer = ListingDetailSerializer(
             listing,
@@ -921,8 +924,41 @@ class RenewListingAPIView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
+        now = timezone.now()
+
+        if listing.status == Listing.STATUS_ACTIVE:
+            if not listing.expires_at:
+                return Response(
+                    {
+                        "detail": (
+                            "This ad is still active and has no expiry time. "
+                            "It cannot be renewed yet."
+                        ),
+                        "renewal_available": False,
+                        "expires_at": None,
+                    },
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            if listing.expires_at > now:
+                return Response(
+                    {
+                        "detail": (
+                            "This ad is still active. Renewal becomes available "
+                            "after its current expiry time has passed."
+                        ),
+                        "renewal_available": False,
+                        "expires_at": listing.expires_at,
+                        "seconds_remaining": max(
+                            0,
+                            int((listing.expires_at - now).total_seconds()),
+                        ),
+                    },
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
         listing.status = Listing.STATUS_ACTIVE
-        listing.expires_at = timezone.now() + timedelta(days=30)
+        listing.expires_at = now + timedelta(days=30)
         listing.sold_at = None
 
         listing.save(

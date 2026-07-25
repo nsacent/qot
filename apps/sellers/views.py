@@ -7,6 +7,7 @@ from rest_framework.views import APIView
 
 from apps.accounts.models import User, UserFollow
 from apps.listings.models import Listing
+from apps.notifications.services import create_follow_notification
 
 from .serializers import (
     PublicSellerSerializer,
@@ -143,10 +144,13 @@ class SellerFollowAPIView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        _, created = UserFollow.objects.get_or_create(
+        follow, created = UserFollow.objects.get_or_create(
             follower=request.user,
             following=seller,
         )
+
+        if created:
+            create_follow_notification(follow)
 
         return Response(
             {

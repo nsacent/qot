@@ -26,6 +26,7 @@ class SellerListingSerializer(serializers.ModelSerializer):
             "status",
             "is_negotiable",
             "is_featured",
+            "featured_until",
             "views_count",
             "favorites_count",
             "expires_at",

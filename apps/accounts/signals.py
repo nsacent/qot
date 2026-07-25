@@ -9,3 +9,7 @@ from .models import UserProfile
 def create_user_profile(sender, instance, created, **kwargs):
     if created:
         UserProfile.objects.get_or_create(user=instance)
+
+        from apps.notifications.services import notify_admins_new_signup
+
+        notify_admins_new_signup(instance)

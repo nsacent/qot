@@ -6,6 +6,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from apps.listings.models import Listing
+from apps.notifications.services import create_favorite_notification
 
 from .models import Favorite
 from .serializers import FavoriteSerializer
@@ -62,6 +63,7 @@ class FavoriteToggleAPIView(APIView):
             )
 
             listing.refresh_from_db(fields=["favorites_count"])
+            create_favorite_notification(favorite)
 
             return Response(
                 {
