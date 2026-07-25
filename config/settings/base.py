@@ -48,6 +48,9 @@ ALLOWED_HOSTS = config(
 # Application definition
 
 INSTALLED_APPS = [
+    # Daphne replaces Django's development runserver with an ASGI server so
+    # local chat presence and typing WebSockets use the configured routes.
+    "daphne",
     "django.contrib.admin",
     "django.contrib.auth",
     "django.contrib.contenttypes",
