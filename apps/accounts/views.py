@@ -15,6 +15,7 @@ from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework_simplejwt.exceptions import TokenError
 
 from .models import User
+from apps.common.emailing import build_branded_email_html
 from .serializers import (
     RegisterSerializer,
     LoginSerializer,
@@ -363,16 +364,24 @@ class PasswordResetRequestAPIView(APIView):
                 f"?uid={uid}&token={token}"
             )
 
+            email_message = (
+                "You requested a password reset.\n\n"
+                "Use the button below to reset your password.\n\n"
+                "If you did not request this, you can ignore this email."
+            )
+
             send_mail(
                 subject="Reset your QOT password",
-                message=(
-                    "You requested a password reset.\n\n"
-                    f"Use this link to reset your password:\n{reset_link}\n\n"
-                    "If you did not request this, you can ignore this email."
-                ),
+                message=f"{email_message}\n\nReset password: {reset_link}",
                 from_email=settings.DEFAULT_FROM_EMAIL,
                 recipient_list=[user.email],
                 fail_silently=False,
+                html_message=build_branded_email_html(
+                    title="Reset your QOT password",
+                    message=email_message,
+                    action_url=reset_link,
+                    action_label="Reset password",
+                ),
             )
 
         return Response(

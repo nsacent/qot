@@ -31,6 +31,8 @@ from .views import (
     AdminBackupDownloadAPIView,
     AdminBackupRestoreAPIView,
     AdminActivityLogListAPIView,
+    AdminListingImageDetailAPIView,
+    AdminListingImageReorderAPIView,
 )
 
 
@@ -49,6 +51,8 @@ urlpatterns = [
     path("listings/<int:pk>/", AdminListingDetailAPIView.as_view(), name="listing_detail"),
     path("listings/<int:pk>/approve/", ApproveListingAPIView.as_view(), name="approve_listing"),
     path("listings/<int:pk>/reject/", RejectListingAPIView.as_view(), name="reject_listing"),
+    path("listings/<int:pk>/images/<int:image_id>/", AdminListingImageDetailAPIView.as_view(), name="listing_image_detail"),
+    path("listings/<int:pk>/images/reorder/", AdminListingImageReorderAPIView.as_view(), name="listing_image_reorder"),
 
     path("listings/<int:pk>/feature/", FeatureListingAPIView.as_view(), name="feature_listing"),
     path("listings/<int:pk>/unfeature/", UnfeatureListingAPIView.as_view(), name="unfeature_listing"),

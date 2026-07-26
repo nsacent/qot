@@ -91,11 +91,13 @@ class ChatMessage(models.Model):
     TYPE_TEXT = "text"
     TYPE_IMAGE = "image"
     TYPE_OFFER = "offer"
+    TYPE_CALLBACK = "callback"
 
     TYPE_CHOICES = [
         (TYPE_TEXT, "Text"),
         (TYPE_IMAGE, "Image"),
         (TYPE_OFFER, "Offer"),
+        (TYPE_CALLBACK, "Callback request"),
     ]
 
     OFFER_PENDING = "pending"
@@ -143,6 +145,9 @@ class ChatMessage(models.Model):
         null=True,
         blank=True,
     )
+
+    callback_name = models.CharField(max_length=150, blank=True, default="")
+    callback_phone = models.CharField(max_length=20, blank=True, default="")
 
     image = models.ImageField(
         upload_to="chats/images/",

@@ -2,12 +2,18 @@ import logging
 
 from django.db.models import Count, Sum, Q
 from django.http import FileResponse
+from django.core.files.storage import default_storage
 from rest_framework import generics, permissions, status
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from apps.accounts.models import User
-from apps.listings.models import Listing
+from apps.listings.models import Listing, ListingImage
+from apps.listings.serializers import ListingImageSerializer
+from apps.listings.image_processing import (
+    delete_listing_image_files,
+    generate_listing_crop_variants,
+)
 from apps.moderation.models import ListingReport
 from apps.accounts.trust import calculate_user_trust_score
 from apps.searches.alerts import notify_saved_search_matches_for_listing
@@ -562,7 +568,15 @@ class ApproveListingAPIView(APIView):
 
         listing.status = Listing.STATUS_ACTIVE
         listing.rejection_reason = ""
-        listing.save(update_fields=["status", "rejection_reason", "updated_at"])
+        listing.review_submission_type = Listing.REVIEW_NEW
+        listing.review_original_snapshot = {}
+        listing.save(update_fields=[
+            "status",
+            "rejection_reason",
+            "review_submission_type",
+            "review_original_snapshot",
+            "updated_at",
+        ])
 
         create_listing_approved_notification(listing)
         calculate_user_trust_score(listing.seller)
@@ -614,6 +628,129 @@ class RejectListingAPIView(APIView):
                 "listing": AdminListingSerializer(listing).data,
             },
             status=status.HTTP_200_OK,
+        )
+
+
+class AdminListingImageDetailAPIView(APIView):
+    permission_classes = [permissions.IsAuthenticated, IsAdminOrModerator]
+
+    def _objects(self, pk, image_id):
+        listing = Listing.objects.get(pk=pk)
+        image = listing.images.get(pk=image_id)
+        return listing, image
+
+    def patch(self, request, pk, image_id):
+        try:
+            _, image = self._objects(pk, image_id)
+        except (Listing.DoesNotExist, ListingImage.DoesNotExist):
+            return Response(
+                {"detail": "Ad photo not found."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        crop_upload = request.FILES.get("crop_image")
+        if not crop_upload:
+            return Response(
+                {"detail": "Admins may crop an existing photo but cannot replace or upload one."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        serializer = ListingImageSerializer(
+            data={"image": crop_upload},
+            context={"request": request},
+        )
+        serializer.is_valid(raise_exception=True)
+        variants = generate_listing_crop_variants(
+            serializer.validated_data["image"]
+        )
+        old_names = [
+            field.name
+            for field in (image.card_image, image.social_image)
+            if field and field.name
+        ]
+        image.card_image = variants.card
+        image.social_image = variants.social
+        image.is_watermarked = True
+        image.save(update_fields=["card_image", "social_image", "is_watermarked"])
+
+        retained = {image.card_image.name, image.social_image.name}
+        for name in old_names:
+            if name and name not in retained:
+                default_storage.delete(name)
+
+        return Response(
+            ListingImageSerializer(image, context={"request": request}).data
+        )
+
+    def delete(self, request, pk, image_id):
+        try:
+            listing, image = self._objects(pk, image_id)
+        except (Listing.DoesNotExist, ListingImage.DoesNotExist):
+            return Response(
+                {"detail": "Ad photo not found."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        was_primary = image.is_primary
+        delete_listing_image_files(image)
+        image.delete()
+
+        remaining = list(listing.images.order_by("sort_order", "id"))
+        if remaining:
+            for index, item in enumerate(remaining):
+                item.sort_order = index
+                item.is_primary = item.is_primary or (was_primary and index == 0)
+            if not any(item.is_primary for item in remaining):
+                remaining[0].is_primary = True
+            ListingImage.objects.bulk_update(remaining, ["sort_order", "is_primary"])
+
+        return Response({"message": "Ad photo deleted successfully."})
+
+
+class AdminListingImageReorderAPIView(APIView):
+    permission_classes = [permissions.IsAuthenticated, IsAdminOrModerator]
+
+    def post(self, request, pk):
+        try:
+            listing = Listing.objects.get(pk=pk)
+        except Listing.DoesNotExist:
+            return Response(
+                {"detail": "Ad not found."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        image_ids = request.data.get("image_ids")
+        try:
+            normalized_ids = [int(image_id) for image_id in image_ids]
+        except (TypeError, ValueError):
+            return Response(
+                {"detail": "Provide the complete photo order."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        current_ids = list(listing.images.values_list("id", flat=True))
+        if (
+            not normalized_ids
+            or len(normalized_ids) != len(set(normalized_ids))
+            or set(normalized_ids) != set(current_ids)
+        ):
+            return Response(
+                {"detail": "Photo order must include every ad photo exactly once."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        images = {image.id: image for image in listing.images.all()}
+        for index, image_id in enumerate(normalized_ids):
+            images[image_id].sort_order = index
+            images[image_id].is_primary = index == 0
+        ListingImage.objects.bulk_update(images.values(), ["sort_order", "is_primary"])
+
+        return Response(
+            {
+                "message": "Photo order updated successfully.",
+                "image_ids": normalized_ids,
+                "primary_image_id": normalized_ids[0],
+            }
         )
 
 class FeatureListingAPIView(APIView):

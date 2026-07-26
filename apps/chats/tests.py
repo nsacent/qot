@@ -495,6 +495,30 @@ class ChatDeliveryTests(APITestCase):
         notification_mock.assert_called_once()
         broadcast_mock.assert_called_once()
 
+    @patch("apps.chats.views.broadcast_chat_message")
+    @patch("apps.chats.views.create_message_notification")
+    def test_offer_cannot_be_below_half_of_ad_price(
+        self,
+        notification_mock,
+        broadcast_mock,
+    ):
+        thread = ChatThread.objects.create(
+            listing=self.listing,
+            buyer=self.buyer,
+            seller=self.seller,
+        )
+
+        response = self.client.post(
+            f"/api/v1/chats/threads/{thread.id}/messages/",
+            {"message_type": "offer", "offer_amount": "100000.00"},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("50%", str(response.data["offer_amount"][0]))
+        notification_mock.assert_not_called()
+        broadcast_mock.assert_not_called()
+
     @patch("apps.chats.views.create_offer_status_notification")
     @patch("apps.chats.views.broadcast_chat_message")
     def test_seller_can_accept_a_pending_offer(
@@ -705,3 +729,49 @@ class ChatDeliveryTests(APITestCase):
         self.seller.refresh_from_db()
         self.assertIsNotNone(self.seller.last_seen_at)
         self.assertEqual(self.seller.last_seen_at.isoformat(), timestamp)
+
+    @patch("apps.chats.views.broadcast_chat_message")
+    @patch("apps.chats.views.create_message_notification")
+    def test_buyer_can_request_callback_with_normalized_ugandan_number(
+        self,
+        notification_mock,
+        broadcast_mock,
+    ):
+        thread = ChatThread.objects.create(
+            listing=self.listing,
+            buyer=self.buyer,
+            seller=self.seller,
+        )
+
+        response = self.client.post(
+            f"/api/v1/chats/threads/{thread.id}/messages/",
+            {
+                "message_type": "callback",
+                "callback_name": "Grace Buyer",
+                "callback_phone": "0702 912 148",
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data["callback_phone"], "+256702912148")
+        thread.refresh_from_db()
+        self.assertEqual(thread.last_message, "Callback requested by Grace Buyer")
+        notification_mock.assert_called_once()
+        broadcast_mock.assert_called_once()
+
+    def test_chat_serializer_identifies_admin_participant(self):
+        self.seller.role = User.ROLE_ADMIN
+        self.seller.is_staff = True
+        self.seller.save(update_fields=["role", "is_staff", "updated_at"])
+        thread = ChatThread.objects.create(
+            listing=self.listing,
+            buyer=self.buyer,
+            seller=self.seller,
+        )
+
+        response = self.client.get(f"/api/v1/chats/threads/{thread.id}/")
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertTrue(response.data["other_user_is_admin"])
+        self.assertEqual(response.data["other_user_role"], User.ROLE_ADMIN)

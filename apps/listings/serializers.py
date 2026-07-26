@@ -502,6 +502,8 @@ class ListingCreateUpdateSerializer(serializers.ModelSerializer):
         listing = Listing.objects.create(
             seller=request.user,
             status=Listing.STATUS_PENDING,
+            review_submission_type=Listing.REVIEW_NEW,
+            submitted_for_review_at=timezone.now(),
             expires_at=timezone.now() + timedelta(days=30),
             **validated_data,
         )
@@ -511,13 +513,29 @@ class ListingCreateUpdateSerializer(serializers.ModelSerializer):
         return listing
 
     def update(self, instance, validated_data):
+        from .review_changes import build_listing_review_snapshot
+
         attributes_data = validated_data.pop("attributes", None)
+
+        starts_edit_review = (
+            instance.review_submission_type != Listing.REVIEW_EDIT
+            and instance.status in {
+                Listing.STATUS_ACTIVE,
+                Listing.STATUS_UNAVAILABLE,
+                Listing.STATUS_SOLD,
+                Listing.STATUS_EXPIRED,
+            }
+        )
+        if starts_edit_review:
+            instance.review_original_snapshot = build_listing_review_snapshot(instance)
+            instance.review_submission_type = Listing.REVIEW_EDIT
 
         for attr, value in validated_data.items():
             setattr(instance, attr, value)
 
         instance.status = Listing.STATUS_PENDING
         instance.rejection_reason = ""
+        instance.submitted_for_review_at = timezone.now()
         instance.save()
 
         if attributes_data is not None:

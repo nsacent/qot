@@ -707,40 +707,48 @@ class ListingLifecycleTests(APITestCase):
             self.assertEqual(social_image.size, (1200, 630))
             self.assertEqual(social_image.format, "WEBP")
 
-    def test_staged_photo_can_be_replaced_after_client_side_crop(self):
+    def test_staged_photo_crop_only_replaces_card_and_social_variants(self):
         self.authenticate_owner()
         initial_response = self.client.post(
             "/api/v1/listings/images/stage/",
-            {"image": self.make_image("initial-crop.png", color=(30, 64, 175))},
+            {
+                "image": self.make_image(
+                    "initial-crop.png",
+                    color=(30, 64, 175),
+                    size=(900, 1200),
+                )
+            },
             format="multipart",
         )
         pending_image = PendingListingImage.objects.get(pk=initial_response.data["id"])
-        original_file_names = {
-            pending_image.image.name,
-            pending_image.source_image.name,
-            pending_image.card_image.name,
-            pending_image.social_image.name,
-        }
+        original_detail_name = pending_image.image.name
+        original_source_name = pending_image.source_image.name
+        original_card_name = pending_image.card_image.name
+        original_social_name = pending_image.social_image.name
+        original_hash = pending_image.content_hash
 
         replacement = self.make_image("new-crop.png", color=(249, 115, 22))
-        expected_hash = calculate_content_hash(replacement)
         response = self.client.patch(
             f"/api/v1/listings/images/stage/{pending_image.id}/",
-            {"image": replacement},
+            {"crop_image": replacement},
             format="multipart",
         )
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         pending_image.refresh_from_db()
         self.assertEqual(response.data["id"], pending_image.id)
-        self.assertEqual(pending_image.content_hash, expected_hash)
+        self.assertEqual(pending_image.content_hash, original_hash)
         self.assertTrue(pending_image.is_watermarked)
-        self.assertFalse(original_file_names.intersection({
-            pending_image.image.name,
-            pending_image.source_image.name,
-            pending_image.card_image.name,
-            pending_image.social_image.name,
-        }))
+        self.assertEqual(pending_image.image.name, original_detail_name)
+        self.assertEqual(pending_image.source_image.name, original_source_name)
+        self.assertNotEqual(pending_image.card_image.name, original_card_name)
+        self.assertNotEqual(pending_image.social_image.name, original_social_name)
+
+        with Image.open(pending_image.image) as detail_image:
+            self.assertEqual(detail_image.size, (900, 1200))
+
+        with Image.open(pending_image.card_image) as card_image:
+            self.assertEqual(card_image.size, (800, 600))
 
     def test_watermark_refresh_regenerates_existing_public_variants(self):
         listing = self.create_listing()
@@ -827,31 +835,52 @@ class ListingLifecycleTests(APITestCase):
         self.assertTrue(uploaded_image.card_image)
         self.assertTrue(uploaded_image.social_image)
 
-    def test_existing_ad_photo_crop_replaces_image_without_changing_its_position(self):
+    def test_existing_ad_photo_crop_preserves_original_and_position(self):
         listing = self.create_listing()
-        image = ListingImage.objects.create(
-            listing=listing,
-            image=self.make_image("before-crop.png", color=(37, 99, 235)),
-            is_primary=True,
-            sort_order=3,
-        )
         self.authenticate_owner()
+        upload_response = self.client.post(
+            f"/api/v1/listings/{listing.id}/images/",
+            {
+                "image": self.make_image(
+                    "before-crop.png",
+                    color=(37, 99, 235),
+                    size=(900, 1200),
+                )
+            },
+            format="multipart",
+        )
+        self.assertEqual(upload_response.status_code, status.HTTP_201_CREATED)
+        image = listing.images.get()
+        image.is_primary = True
+        image.sort_order = 3
+        image.save(update_fields=["is_primary", "sort_order"])
+        original_detail_name = image.image.name
+        original_source_name = image.source_image.name
+        original_card_name = image.card_image.name
+        original_social_name = image.social_image.name
+        original_hash = image.content_hash
         replacement = self.make_image("after-crop.png", color=(16, 185, 129))
-        expected_hash = calculate_content_hash(replacement)
 
         response = self.client.patch(
             f"/api/v1/listings/{listing.id}/images/{image.id}/",
-            {"image": replacement},
+            {"crop_image": replacement},
             format="multipart",
         )
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         image.refresh_from_db()
         self.assertEqual(response.data["id"], image.id)
-        self.assertEqual(image.content_hash, expected_hash)
+        self.assertEqual(image.content_hash, original_hash)
         self.assertTrue(image.is_watermarked)
         self.assertTrue(image.is_primary)
         self.assertEqual(image.sort_order, 3)
+        self.assertEqual(image.image.name, original_detail_name)
+        self.assertEqual(image.source_image.name, original_source_name)
+        self.assertNotEqual(image.card_image.name, original_card_name)
+        self.assertNotEqual(image.social_image.name, original_social_name)
+
+        with Image.open(image.image) as detail_image:
+            self.assertEqual(detail_image.size, (900, 1200))
 
     def test_category_photo_minimum_is_enforced_when_creating_an_ad(self):
         vehicles = Category.objects.create(name="Vehicles", slug="vehicles")
@@ -997,3 +1026,44 @@ class ListingLifecycleTests(APITestCase):
             {item["value"]: item["count"] for item in response.data["filters"]["brand"]["options"]},
             {"QOT": 1, "Other": 1},
         )
+
+    def test_editing_an_active_ad_preserves_original_for_admin_review(self):
+        listing = self.create_listing(title="Original approved advert")
+        self.authenticate_owner()
+
+        response = self.client.patch(
+            f"/api/v1/listings/{listing.id}/",
+            {"title": "Updated approved advert"},
+            format="json",
+        )
+        listing.refresh_from_db()
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(listing.status, Listing.STATUS_PENDING)
+        self.assertEqual(listing.review_submission_type, Listing.REVIEW_EDIT)
+        self.assertEqual(
+            listing.review_original_snapshot["title"],
+            "Original approved advert",
+        )
+        self.assertIsNotNone(listing.submitted_for_review_at)
+
+        admin = User.objects.create_user(
+            phone="+256700001099",
+            full_name="Review Admin",
+            password="test-password",
+            role=User.ROLE_ADMIN,
+            is_staff=True,
+        )
+        self.client.force_authenticate(admin)
+        detail = self.client.get(
+            f"/api/v1/admin-panel/listings/{listing.id}/"
+        )
+
+        self.assertEqual(detail.status_code, status.HTTP_200_OK)
+        self.assertEqual(detail.data["review_submission_type"], "edit")
+        title_change = next(
+            change for change in detail.data["edit_changes"]
+            if change["field"] == "title"
+        )
+        self.assertEqual(title_change["before"], "Original approved advert")
+        self.assertEqual(title_change["after"], "Updated approved advert")

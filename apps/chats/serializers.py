@@ -1,8 +1,11 @@
+from decimal import Decimal
+
 from django.urls import reverse
 from rest_framework import serializers
 
 from apps.listings.models import Listing
 from apps.listings.serializers import ListingListSerializer
+from apps.accounts.phone_numbers import normalize_ugandan_phone
 
 from .models import (
     ChatThread,
@@ -58,6 +61,8 @@ class ChatMessageSerializer(serializers.ModelSerializer):
             "body",
             "offer_amount",
             "offer_status",
+            "callback_name",
+            "callback_phone",
             "image",
             "attachments",
             "reply_to",
@@ -87,6 +92,8 @@ class ChatMessageSerializer(serializers.ModelSerializer):
         if not body:
             if replied_message.message_type == ChatMessage.TYPE_OFFER:
                 body = f"Offer: UGX {replied_message.offer_amount:,.0f}"
+            elif replied_message.message_type == ChatMessage.TYPE_CALLBACK:
+                body = f"Callback request from {replied_message.callback_name}"
             else:
                 first_attachment = replied_message.attachments.first()
                 body = (
@@ -113,6 +120,8 @@ class ChatThreadSerializer(serializers.ModelSerializer):
     other_user_avatar = serializers.SerializerMethodField()
     other_user_online = serializers.SerializerMethodField()
     other_user_last_seen = serializers.SerializerMethodField()
+    other_user_role = serializers.SerializerMethodField()
+    other_user_is_admin = serializers.SerializerMethodField()
     unread_count = serializers.SerializerMethodField()
     is_favourite = serializers.SerializerMethodField()
     is_archived = serializers.SerializerMethodField()
@@ -135,6 +144,8 @@ class ChatThreadSerializer(serializers.ModelSerializer):
             "other_user_avatar",
             "other_user_online",
             "other_user_last_seen",
+            "other_user_role",
+            "other_user_is_admin",
             "last_message",
             "last_message_at",
             "buyer_unread_count",
@@ -233,6 +244,14 @@ class ChatThreadSerializer(serializers.ModelSerializer):
 
         return user.last_seen_at or user.last_login or user.updated_at
 
+    def get_other_user_role(self, obj):
+        user = self._other_user(obj)
+        return user.role if user else None
+
+    def get_other_user_is_admin(self, obj):
+        user = self._other_user(obj)
+        return bool(user and user.role in {"admin", "moderator"})
+
     def get_is_favourite(self, obj):
         return self._state_value(obj, "user_is_favourite", "is_favourite")
 
@@ -324,6 +343,8 @@ class ChatMessageCreateSerializer(serializers.ModelSerializer):
             "message_type",
             "body",
             "offer_amount",
+            "callback_name",
+            "callback_phone",
             "image",
             "reply_to",
         ]
@@ -334,6 +355,8 @@ class ChatMessageCreateSerializer(serializers.ModelSerializer):
         image = attrs.get("image")
         offer_amount = attrs.get("offer_amount")
         reply_to = attrs.get("reply_to")
+        callback_name = str(attrs.get("callback_name") or "").strip()
+        callback_phone = str(attrs.get("callback_phone") or "").strip()
 
         if message_type == ChatMessage.TYPE_TEXT and not body:
             raise serializers.ValidationError(
@@ -353,6 +376,16 @@ class ChatMessageCreateSerializer(serializers.ModelSerializer):
 
             thread = self.context.get("thread")
             request = self.context.get("request")
+            if thread and offer_amount < (thread.listing.price * Decimal("0.50")):
+                minimum_offer = thread.listing.price * Decimal("0.50")
+                raise serializers.ValidationError(
+                    {
+                        "offer_amount": (
+                            f"Offers cannot be below 50% of the ad price "
+                            f"(UGX {minimum_offer:,.0f})."
+                        )
+                    }
+                )
             if thread and request and request.user.id != thread.buyer_id:
                 raise serializers.ValidationError(
                     {"message_type": "Only the buyer can make an offer."}
@@ -360,6 +393,29 @@ class ChatMessageCreateSerializer(serializers.ModelSerializer):
         elif offer_amount is not None:
             raise serializers.ValidationError(
                 {"offer_amount": "Offer amount is only valid for offer messages."}
+            )
+
+        if message_type == ChatMessage.TYPE_CALLBACK:
+            thread = self.context.get("thread")
+            request = self.context.get("request")
+            if thread and request and request.user.id != thread.buyer_id:
+                raise serializers.ValidationError(
+                    {"message_type": "Only the buyer can request a callback."}
+                )
+            if len(callback_name) < 2:
+                raise serializers.ValidationError(
+                    {"callback_name": "Enter the name the seller should ask for."}
+                )
+            try:
+                attrs["callback_phone"] = normalize_ugandan_phone(callback_phone)
+            except ValueError as error:
+                raise serializers.ValidationError(
+                    {"callback_phone": str(error)}
+                ) from error
+            attrs["callback_name"] = callback_name
+        elif callback_name or callback_phone:
+            raise serializers.ValidationError(
+                {"callback_phone": "Callback details are only valid for callback requests."}
             )
 
         thread = self.context.get("thread")

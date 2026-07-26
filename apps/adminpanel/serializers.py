@@ -4,6 +4,10 @@ from rest_framework import serializers
 
 from apps.accounts.models import User
 from apps.listings.models import Listing
+from apps.listings.review_changes import (
+    build_listing_review_snapshot,
+    diff_listing_review_snapshots,
+)
 from apps.listings.serializers import (
     ListingCreateUpdateSerializer,
     ListingAttributeSerializer,
@@ -345,6 +349,8 @@ class AdminListingSerializer(serializers.ModelSerializer):
             "views_count",
             "favorites_count",
             "rejection_reason",
+            "review_submission_type",
+            "submitted_for_review_at",
             "primary_image",
             "created_at",
             "updated_at",
@@ -356,12 +362,13 @@ class AdminListingSerializer(serializers.ModelSerializer):
         if not image or not image.image:
             return None
 
+        display_image = image.card_image or image.image
         request = self.context.get("request")
 
         if request:
-            return request.build_absolute_uri(image.image.url)
+            return request.build_absolute_uri(display_image.url)
 
-        return image.image.url
+        return display_image.url
 
 
 class AdminListingDetailSerializer(AdminListingSerializer):
@@ -386,6 +393,8 @@ class AdminListingDetailSerializer(AdminListingSerializer):
     image_count = serializers.SerializerMethodField()
     reports_count = serializers.SerializerMethodField()
     open_reports_count = serializers.SerializerMethodField()
+    review_current_snapshot = serializers.SerializerMethodField()
+    edit_changes = serializers.SerializerMethodField()
 
     class Meta(AdminListingSerializer.Meta):
         fields = AdminListingSerializer.Meta.fields + [
@@ -404,6 +413,9 @@ class AdminListingDetailSerializer(AdminListingSerializer):
             "attributes",
             "reports_count",
             "open_reports_count",
+            "review_original_snapshot",
+            "review_current_snapshot",
+            "edit_changes",
         ]
         read_only_fields = fields
 
@@ -419,6 +431,19 @@ class AdminListingDetailSerializer(AdminListingSerializer):
 
     def get_open_reports_count(self, obj):
         return obj.reports.filter(is_resolved=False).count()
+
+    def get_review_current_snapshot(self, obj):
+        return build_listing_review_snapshot(obj)
+
+    def get_edit_changes(self, obj):
+        if obj.review_submission_type != Listing.REVIEW_EDIT:
+            return []
+
+        current = build_listing_review_snapshot(obj)
+        return diff_listing_review_snapshots(
+            obj.review_original_snapshot,
+            current,
+        )
 
 
 class AdminListingUpdateSerializer(ListingCreateUpdateSerializer):

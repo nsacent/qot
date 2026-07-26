@@ -5,6 +5,14 @@ from django.utils import timezone
 
 
 class Listing(models.Model):
+    REVIEW_NEW = "new"
+    REVIEW_EDIT = "edit"
+
+    REVIEW_SUBMISSION_CHOICES = [
+        (REVIEW_NEW, "New ad"),
+        (REVIEW_EDIT, "Edited ad"),
+    ]
+
     STATUS_DRAFT = "draft"
     STATUS_PENDING = "pending"
     STATUS_ACTIVE = "active"
@@ -104,6 +112,15 @@ class Listing(models.Model):
     sold_at = models.DateTimeField(null=True, blank=True)
 
     rejection_reason = models.TextField(null=True, blank=True)
+
+    review_submission_type = models.CharField(
+        max_length=20,
+        choices=REVIEW_SUBMISSION_CHOICES,
+        default=REVIEW_NEW,
+        db_index=True,
+    )
+    review_original_snapshot = models.JSONField(default=dict, blank=True)
+    submitted_for_review_at = models.DateTimeField(null=True, blank=True)
 
     created_at = models.DateTimeField(auto_now_add=True, db_index=True)
     updated_at = models.DateTimeField(auto_now=True)

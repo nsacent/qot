@@ -19,6 +19,7 @@ from .image_fingerprints import (
 )
 from .image_processing import (
     delete_listing_image_files,
+    generate_listing_crop_variants,
     process_listing_upload,
 )
 from .photo_requirements import (
@@ -492,6 +493,40 @@ class PendingListingImageAPIView(APIView):
                 {"detail": "Staged image not found."},
                 status=status.HTTP_404_NOT_FOUND,
             )
+
+        crop_upload = request.FILES.get("crop_image")
+
+        if crop_upload:
+            image_serializer = ListingImageSerializer(data={"image": crop_upload})
+            image_serializer.is_valid(raise_exception=True)
+            validated_crop = image_serializer.validated_data["image"]
+            variants = generate_listing_crop_variants(validated_crop)
+            old_file_names = [
+                field.name
+                for field in (
+                    pending_image.card_image,
+                    pending_image.social_image,
+                )
+                if field and field.name
+            ]
+
+            pending_image.card_image = variants.card
+            pending_image.social_image = variants.social
+            pending_image.is_watermarked = True
+            pending_image.save(update_fields=[
+                "card_image",
+                "social_image",
+                "is_watermarked",
+            ])
+            delete_replaced_image_files(
+                old_file_names,
+                [
+                    pending_image.card_image.name,
+                    pending_image.social_image.name,
+                ],
+            )
+
+            return Response(pending_image_payload(pending_image, request))
 
         image_serializer = ListingImageSerializer(data=request.data)
         image_serializer.is_valid(raise_exception=True)
@@ -1141,6 +1176,42 @@ class ListingImageDeleteAPIView(APIView):
             return Response(
                 {"detail": "Image not found."},
                 status=status.HTTP_404_NOT_FOUND,
+            )
+
+        crop_upload = request.FILES.get("crop_image")
+
+        if crop_upload:
+            serializer = ListingImageSerializer(
+                data={"image": crop_upload},
+                context={"request": request},
+            )
+            serializer.is_valid(raise_exception=True)
+            validated_crop = serializer.validated_data["image"]
+            variants = generate_listing_crop_variants(validated_crop)
+            old_file_names = [
+                field.name
+                for field in (
+                    image.card_image,
+                    image.social_image,
+                )
+                if field and field.name
+            ]
+
+            image.card_image = variants.card
+            image.social_image = variants.social
+            image.is_watermarked = True
+            image.save(update_fields=[
+                "card_image",
+                "social_image",
+                "is_watermarked",
+            ])
+            delete_replaced_image_files(
+                old_file_names,
+                [image.card_image.name, image.social_image.name],
+            )
+
+            return Response(
+                ListingImageSerializer(image, context={"request": request}).data
             )
 
         serializer = ListingImageSerializer(

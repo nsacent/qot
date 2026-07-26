@@ -31,6 +31,12 @@ class ListingImageVariants:
     social: ContentFile
 
 
+@dataclass
+class ListingCropVariants:
+    card: ContentFile
+    social: ContentFile
+
+
 def _open_clean_image(image_file):
     try:
         image_file.seek(0)
@@ -126,6 +132,19 @@ def generate_listing_variants(source_file):
 
     return ListingImageVariants(
         detail=_save_webp(detail, stem, "detail", 84),
+        card=_save_webp(card, stem, "card", 78),
+        social=_save_webp(social, stem, "social", 82),
+    )
+
+
+def generate_listing_crop_variants(crop_file):
+    """Build public crop variants without replacing the preserved source/detail."""
+    crop = _open_clean_image(crop_file)
+    stem = Path(getattr(crop_file, "name", "qot-photo")).stem or "qot-photo"
+    card = apply_qot_watermark(_crop_to_aspect(crop, CARD_SIZE))
+    social = apply_qot_watermark(_crop_to_aspect(crop, SOCIAL_SIZE))
+
+    return ListingCropVariants(
         card=_save_webp(card, stem, "card", 78),
         social=_save_webp(social, stem, "social", 82),
     )

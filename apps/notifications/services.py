@@ -1,5 +1,3 @@
-from html import escape
-
 from asgiref.sync import async_to_sync
 from channels.layers import get_channel_layer
 from django.conf import settings
@@ -7,6 +5,8 @@ from django.core.mail import EmailMultiAlternatives
 from django.db import transaction
 from django.db.models import Q
 import requests
+
+from apps.common.emailing import build_branded_email_html
 
 from .models import Notification, PushDevice
 
@@ -44,32 +44,12 @@ def _send_branded_email(
         plain_message = f"{plain_message}\n\n{action_label}: {action_url}"
 
     plain_message = f"{plain_message}\n\nQOT Uganda\ninfo@qot.ug | 0200911678"
-    action_markup = ""
-
-    if action_url:
-        action_markup = (
-            '<p style="margin:24px 0 4px">'
-            f'<a href="{escape(action_url, quote=True)}" '
-            'style="display:inline-block;background:#f97316;color:#fff;text-decoration:none;'
-            'font-weight:800;padding:12px 18px;border-radius:12px">'
-            f"{escape(action_label)}</a></p>"
-        )
-
-    html_message = f"""
-        <div style="background:#fff7f2;padding:28px 14px;font-family:Arial,sans-serif;color:#0f172a">
-          <div style="max-width:600px;margin:0 auto;background:#fff;border:1px solid #fed7aa;border-radius:20px;overflow:hidden">
-            <div style="background:#f97316;color:#fff;padding:18px 24px;font-size:22px;font-weight:900">QOT</div>
-            <div style="padding:26px 24px">
-              <h1 style="margin:0;font-size:22px;line-height:1.3">{escape(title)}</h1>
-              <p style="margin:14px 0 0;color:#475569;font-size:15px;line-height:1.7">{escape(message)}</p>
-              {action_markup}
-            </div>
-            <div style="padding:16px 24px;background:#f8fafc;color:#64748b;font-size:12px;line-height:1.6">
-              QOT Uganda · info@qot.ug · 0200911678
-            </div>
-          </div>
-        </div>
-    """
+    html_message = build_branded_email_html(
+        title=title,
+        message=message,
+        action_url=action_url,
+        action_label=action_label,
+    )
 
     email = EmailMultiAlternatives(
         subject=subject,
@@ -347,6 +327,11 @@ def create_message_notification(thread, message):
         notification_message = (
             f"{sender.full_name} offered UGX {message.offer_amount:,.0f} "
             f"for '{thread.listing.title}'."
+        )
+    elif getattr(message, "message_type", "") == "callback":
+        title = "Callback requested"
+        notification_message = (
+            f"{message.callback_name} requested a call about '{thread.listing.title}'."
         )
     else:
         title = "New message"

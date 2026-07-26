@@ -10,6 +10,7 @@ from django.utils import timezone
 
 from .models import VerificationCode
 from .sms import send_sms
+from apps.common.emailing import build_branded_email_html
 
 
 class OTPRateLimitError(RuntimeError):
@@ -138,17 +139,23 @@ def create_email_verification_code(user):
     code = generate_otp_code()
     expiry_minutes = max(1, int(settings.PHONE_OTP_EXPIRY_MINUTES))
 
+    email_message = (
+        f"Hello {user.full_name},\n\n"
+        f"Your QOT verification code is: {code}\n\n"
+        f"This code expires in {expiry_minutes} minutes.\n\n"
+        "If you did not request this, please ignore this message."
+    )
+
     send_mail(
         subject="Verify your QOT account",
-        message=(
-            f"Hello {user.full_name},\n\n"
-            f"Your QOT verification code is: {code}\n\n"
-            f"This code expires in {expiry_minutes} minutes.\n\n"
-            "If you did not request this, please ignore this message."
-        ),
+        message=email_message,
         from_email=settings.DEFAULT_FROM_EMAIL,
         recipient_list=[user.email],
         fail_silently=False,
+        html_message=build_branded_email_html(
+            title="Verify your QOT account",
+            message=email_message,
+        ),
     )
 
     return _store_verification_code(

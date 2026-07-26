@@ -207,6 +207,9 @@ def chat_message_preview(message):
         }.get(message.offer_status, "Offer")
         return f"{status_label}: UGX {message.offer_amount:,.0f}"
 
+    if message.message_type == ChatMessage.TYPE_CALLBACK:
+        return f"Callback requested by {message.callback_name}"
+
     return message.body or "[Attachment]"
 
 

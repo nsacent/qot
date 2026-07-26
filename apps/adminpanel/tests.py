@@ -1,20 +1,23 @@
 from datetime import timedelta
+from io import BytesIO
 import sqlite3
 import tempfile
 from pathlib import Path
 from unittest.mock import patch
 
 from django.test import SimpleTestCase, override_settings
+from django.core.files.uploadedfile import SimpleUploadedFile
 from django.utils import timezone
 from rest_framework import status
 from rest_framework.test import APITestCase
 
 from apps.accounts.models import User
 from apps.categories.models import Category, CategoryFilter
-from apps.listings.models import Listing, ListingAttribute
+from apps.listings.models import Listing, ListingAttribute, ListingImage
 from apps.locations.models import City, Region
 from apps.adminpanel.backups import create_backup, list_backups, restore_backup
 from apps.adminpanel.models import AdminActivityLog
+from PIL import Image
 
 
 class BackupServiceRoundTripTests(SimpleTestCase):
@@ -411,6 +414,13 @@ class AdminUserManagementTests(APITestCase):
 
 class AdminListingManagementTests(APITestCase):
     def setUp(self):
+        self.media_directory = tempfile.TemporaryDirectory()
+        self.media_override = override_settings(
+            MEDIA_ROOT=Path(self.media_directory.name)
+        )
+        self.media_override.enable()
+        self.addCleanup(self.media_override.disable)
+        self.addCleanup(self.media_directory.cleanup)
         self.admin = User.objects.create_user(
             phone="+256700003001",
             email="listing-admin@example.com",
@@ -452,6 +462,15 @@ class AdminListingManagementTests(APITestCase):
 
     def detail_url(self):
         return f"/api/v1/admin-panel/listings/{self.listing.id}/"
+
+    def make_image(self, name, colour):
+        image_bytes = BytesIO()
+        Image.new("RGB", (800, 600), color=colour).save(image_bytes, format="PNG")
+        return SimpleUploadedFile(
+            name,
+            image_bytes.getvalue(),
+            content_type="image/png",
+        )
 
     def test_admin_can_view_complete_listing_detail(self):
         response = self.client.get(self.detail_url())
@@ -605,3 +624,38 @@ class AdminListingManagementTests(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertEqual(response.data["detail"], "Deleted listings cannot be edited.")
         self.assertNotEqual(self.listing.title, "Edited after deletion")
+
+    def test_admin_can_crop_reorder_and_delete_existing_photos(self):
+        first = ListingImage.objects.create(
+            listing=self.listing,
+            image=self.make_image("first.png", (240, 100, 50)),
+            is_primary=True,
+            sort_order=0,
+        )
+        second = ListingImage.objects.create(
+            listing=self.listing,
+            image=self.make_image("second.png", (50, 100, 240)),
+            sort_order=1,
+        )
+
+        crop_response = self.client.patch(
+            f"/api/v1/admin-panel/listings/{self.listing.id}/images/{first.id}/",
+            {"crop_image": self.make_image("crop.png", (100, 220, 80))},
+            format="multipart",
+        )
+        reorder_response = self.client.post(
+            f"/api/v1/admin-panel/listings/{self.listing.id}/images/reorder/",
+            {"image_ids": [second.id, first.id]},
+            format="json",
+        )
+        delete_response = self.client.delete(
+            f"/api/v1/admin-panel/listings/{self.listing.id}/images/{first.id}/"
+        )
+        second.refresh_from_db()
+
+        self.assertEqual(crop_response.status_code, status.HTTP_200_OK)
+        self.assertTrue(crop_response.data["card_image_url"])
+        self.assertEqual(reorder_response.status_code, status.HTTP_200_OK)
+        self.assertEqual(delete_response.status_code, status.HTTP_200_OK)
+        self.assertTrue(second.is_primary)
+        self.assertFalse(ListingImage.objects.filter(pk=first.id).exists())
