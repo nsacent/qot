@@ -8,6 +8,7 @@ from channels.testing import WebsocketCommunicator
 from django.core import signing
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import override_settings
+from django.utils import timezone
 from rest_framework import status
 from rest_framework.test import APITestCase
 
@@ -50,6 +51,7 @@ class ChatDeliveryTests(APITestCase):
             full_name="Chat Buyer",
             password="test-password",
             is_verified=True,
+            phone_verified_at=timezone.now(),
         )
         self.seller = User.objects.create_user(
             phone="+256700008002",
@@ -57,6 +59,7 @@ class ChatDeliveryTests(APITestCase):
             full_name="Chat Seller",
             password="test-password",
             is_verified=True,
+            phone_verified_at=timezone.now(),
         )
         region = Region.objects.create(name="Chat Region", slug="chat-region")
         city = City.objects.create(

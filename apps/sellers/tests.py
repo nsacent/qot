@@ -1,5 +1,6 @@
 from unittest.mock import patch
 
+from django.utils import timezone
 from rest_framework import status
 from rest_framework.test import APITestCase
 
@@ -26,7 +27,24 @@ class SellerFollowTests(APITestCase):
             password="test-password",
             is_verified=True,
         )
+        self.follower.phone_verified_at = timezone.now()
+        self.follower.save(update_fields=["phone_verified_at"])
+        self.seller.phone_verified_at = timezone.now()
+        self.seller.save(update_fields=["phone_verified_at"])
         self.client.force_authenticate(self.follower)
+
+    def test_phone_verification_is_required_to_follow(self):
+        self.follower.phone_verified_at = None
+        self.follower.save(update_fields=["phone_verified_at"])
+
+        response = self.client.post(
+            f"/api/v1/sellers/{self.seller.id}/follow/",
+            {},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertFalse(UserFollow.objects.exists())
 
     @patch("apps.sellers.views.create_follow_notification")
     def test_follow_is_idempotent_and_visible_on_profile(self, notify_follow):

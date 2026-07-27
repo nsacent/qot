@@ -1,5 +1,6 @@
 from decimal import Decimal
 
+from django.utils import timezone
 from rest_framework import status
 from rest_framework.test import APITestCase
 
@@ -18,6 +19,7 @@ class PaymentCreationTests(APITestCase):
             full_name="Payment User",
             password="test-password",
             is_verified=True,
+            phone_verified_at=timezone.now(),
         )
         region = Region.objects.create(name="Payment Region", slug="payment-region")
         city = City.objects.create(

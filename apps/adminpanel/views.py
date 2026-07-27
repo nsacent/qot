@@ -397,6 +397,7 @@ class PendingListingListAPIView(generics.ListAPIView):
                 "category__parent",
                 "city",
                 "city__region",
+                "area",
             )
             .prefetch_related("images")
             .order_by("-created_at")
@@ -406,6 +407,7 @@ class PendingListingListAPIView(generics.ListAPIView):
         seller = self.request.query_params.get("seller")
         category = self.request.query_params.get("category")
         city = self.request.query_params.get("city")
+        area = self.request.query_params.get("area")
 
         if search:
             queryset = queryset.filter(
@@ -413,6 +415,8 @@ class PendingListingListAPIView(generics.ListAPIView):
                 | Q(description__icontains=search)
                 | Q(seller__full_name__icontains=search)
                 | Q(seller__phone__icontains=search)
+                | Q(city__name__icontains=search)
+                | Q(area__name__icontains=search)
             )
 
         if seller:
@@ -426,6 +430,9 @@ class PendingListingListAPIView(generics.ListAPIView):
 
         if city:
             queryset = queryset.filter(city__slug=city)
+
+        if area:
+            queryset = queryset.filter(area__slug=area)
 
         return queryset.distinct()
 
@@ -447,6 +454,7 @@ class AdminListingListAPIView(generics.ListAPIView):
                 "category__parent",
                 "city",
                 "city__region",
+                "area",
             )
             .prefetch_related("images")
             .order_by("-created_at")
@@ -457,6 +465,7 @@ class AdminListingListAPIView(generics.ListAPIView):
         seller = self.request.query_params.get("seller")
         category = self.request.query_params.get("category")
         city = self.request.query_params.get("city")
+        area = self.request.query_params.get("area")
         is_featured = self.request.query_params.get("is_featured")
         date_from = self.request.query_params.get("date_from")
         date_to = self.request.query_params.get("date_to")
@@ -467,6 +476,8 @@ class AdminListingListAPIView(generics.ListAPIView):
                 | Q(description__icontains=search)
                 | Q(seller__full_name__icontains=search)
                 | Q(seller__phone__icontains=search)
+                | Q(city__name__icontains=search)
+                | Q(area__name__icontains=search)
             )
 
         if status_param:
@@ -483,6 +494,9 @@ class AdminListingListAPIView(generics.ListAPIView):
 
         if city:
             queryset = queryset.filter(city__slug=city)
+
+        if area:
+            queryset = queryset.filter(area__slug=area)
 
         if is_featured == "true":
             queryset = queryset.filter(is_featured=True)
@@ -518,6 +532,7 @@ class AdminListingDetailAPIView(generics.RetrieveUpdateAPIView):
                 "category__parent",
                 "city",
                 "city__region",
+                "area",
             )
             .prefetch_related(
                 "images",

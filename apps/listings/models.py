@@ -61,6 +61,14 @@ class Listing(models.Model):
         related_name="listings",
     )
 
+    area = models.ForeignKey(
+        "locations.Area",
+        on_delete=models.PROTECT,
+        related_name="listings",
+        null=True,
+        blank=True,
+    )
+
     title = models.CharField(
         max_length=180,
         validators=[
@@ -131,6 +139,7 @@ class Listing(models.Model):
             models.Index(fields=["status", "created_at"]),
             models.Index(fields=["category", "status"]),
             models.Index(fields=["city", "status"]),
+            models.Index(fields=["area", "status"]),
             models.Index(fields=["seller", "status"]),
             models.Index(fields=["price"]),
         ]

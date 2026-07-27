@@ -156,7 +156,7 @@ class AdminUserDetailSerializer(AdminUserSerializer):
         listings = (
             obj.listings
             .exclude(status=Listing.STATUS_DELETED)
-            .select_related("seller", "category", "city")
+            .select_related("seller", "category", "city", "area")
             .prefetch_related("images")
             .order_by("-created_at")[:6]
         )
@@ -324,6 +324,7 @@ class AdminListingSerializer(serializers.ModelSerializer):
     seller_phone = serializers.CharField(source="seller.phone", read_only=True)
     category_name = serializers.CharField(source="category.name", read_only=True)
     city_name = serializers.CharField(source="city.name", read_only=True)
+    area_name = serializers.CharField(source="area.name", read_only=True, allow_null=True)
     primary_image = serializers.SerializerMethodField()
 
     class Meta:
@@ -339,6 +340,8 @@ class AdminListingSerializer(serializers.ModelSerializer):
             "category_name",
             "city",
             "city_name",
+            "area",
+            "area_name",
             "price",
             "currency",
             "condition",

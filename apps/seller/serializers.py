@@ -6,6 +6,7 @@ from apps.listings.models import Listing
 class SellerListingSerializer(serializers.ModelSerializer):
     category_name = serializers.CharField(source="category.name", read_only=True)
     city_name = serializers.CharField(source="city.name", read_only=True)
+    area_name = serializers.CharField(source="area.name", read_only=True, allow_null=True)
     primary_image = serializers.SerializerMethodField()
     image_count = serializers.SerializerMethodField()
 
@@ -20,6 +21,8 @@ class SellerListingSerializer(serializers.ModelSerializer):
             "category_name",
             "city",
             "city_name",
+            "area",
+            "area_name",
             "price",
             "currency",
             "condition",

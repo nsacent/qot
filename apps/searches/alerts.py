@@ -22,6 +22,7 @@ def listing_matches_saved_search(listing, saved_search):
                 listing.description or "",
                 listing.category.name if listing.category else "",
                 listing.city.name if listing.city else "",
+                listing.area.name if listing.area else "",
             ]
         ).lower()
 
@@ -30,6 +31,7 @@ def listing_matches_saved_search(listing, saved_search):
 
     category = get_filter_value(filters, "category")
     city = get_filter_value(filters, "city")
+    area = get_filter_value(filters, "area")
     min_price = get_filter_value(filters, "min_price")
     max_price = get_filter_value(filters, "max_price")
 
@@ -56,6 +58,13 @@ def listing_matches_saved_search(listing, saved_search):
         city_text = str(city)
 
         if str(listing.city_id) != city_text and listing.city.slug != city_text:
+            return False
+
+    if area:
+        if not listing.area:
+            return False
+        area_text = str(area)
+        if str(listing.area_id) != area_text and listing.area.slug != area_text:
             return False
 
     if min_price is not None:

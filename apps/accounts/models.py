@@ -131,6 +131,13 @@ class UserProfile(models.Model):
         null=True,
         blank=True,
     )
+    default_area = models.ForeignKey(
+        "locations.Area",
+        on_delete=models.SET_NULL,
+        related_name="default_user_profiles",
+        null=True,
+        blank=True,
+    )
     bio = models.TextField(null=True, blank=True)
     business_name = models.CharField(max_length=150, null=True, blank=True)
     notification_preferences = models.JSONField(

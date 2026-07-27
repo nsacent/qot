@@ -69,6 +69,8 @@ def build_listing_review_snapshot(listing):
         category_name = f"{listing.category.parent.name} / {category_name}"
 
     city_name = listing.city.name
+    if listing.area:
+        city_name = f"{listing.area.name}, {city_name}"
     if getattr(listing.city, "region", None):
         city_name = f"{city_name}, {listing.city.region.name}"
 

@@ -26,6 +26,7 @@ class HomeAPIView(APIView):
                 "category__parent",
                 "city",
                 "city__region",
+                "area",
             )
             .prefetch_related("images")
         )

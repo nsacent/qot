@@ -1,7 +1,7 @@
 from rest_framework import status
 from rest_framework.test import APITestCase
 
-from .models import City, Region
+from .models import Area, City, Region
 
 
 class LocationCatalogTests(APITestCase):
@@ -39,3 +39,51 @@ class LocationCatalogTests(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertIsInstance(response.data, list)
         self.assertEqual(len(response.data), 55)
+
+    def test_area_catalog_can_be_filtered_by_city(self):
+        central = Region.objects.create(name="Central", slug="central")
+        kampala = City.objects.create(
+            region=central,
+            name="Kampala",
+            slug="kampala",
+        )
+        wakiso = City.objects.create(
+            region=central,
+            name="Wakiso",
+            slug="wakiso",
+        )
+        Area.objects.create(city=kampala, name="Kawempe", slug="kawempe")
+        Area.objects.create(city=kampala, name="Makindye", slug="makindye")
+        Area.objects.create(city=wakiso, name="Kira", slug="kira")
+
+        response = self.client.get("/api/v1/locations/areas/?city=kampala")
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(
+            [area["name"] for area in response.data],
+            ["Kawempe", "Makindye"],
+        )
+        self.assertTrue(all(area["city_name"] == "Kampala" for area in response.data))
+
+    def test_city_catalog_includes_only_active_areas(self):
+        central = Region.objects.create(name="Central", slug="central")
+        kampala = City.objects.create(
+            region=central,
+            name="Kampala",
+            slug="kampala",
+        )
+        Area.objects.create(city=kampala, name="Nakawa", slug="nakawa")
+        Area.objects.create(
+            city=kampala,
+            name="Retired area",
+            slug="retired-area",
+            is_active=False,
+        )
+
+        response = self.client.get("/api/v1/locations/cities/?region=central")
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(
+            [area["name"] for area in response.data[0]["areas"]],
+            ["Nakawa"],
+        )

@@ -9,6 +9,7 @@ class HomeListingSerializer(serializers.ModelSerializer):
     category_name = serializers.CharField(source="category.name", read_only=True)
     category_parent_name = serializers.SerializerMethodField()
     city_name = serializers.CharField(source="city.name", read_only=True)
+    area_name = serializers.CharField(source="area.name", read_only=True, allow_null=True)
     primary_image = serializers.SerializerMethodField()
 
     class Meta:
@@ -24,6 +25,8 @@ class HomeListingSerializer(serializers.ModelSerializer):
             "category_parent_name",
             "city",
             "city_name",
+            "area",
+            "area_name",
             "price",
             "currency",
             "condition",

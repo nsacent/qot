@@ -1,6 +1,6 @@
 from django.contrib import admin
 
-from .models import Region, City
+from .models import Area, City, Region
 
 
 @admin.register(Region)
@@ -42,6 +42,32 @@ class CityAdmin(admin.ModelAdmin):
         "name",
         "slug",
         "region__name",
+    ]
+    prepopulated_fields = {
+        "slug": ("name",),
+    }
+
+
+@admin.register(Area)
+class AreaAdmin(admin.ModelAdmin):
+    list_display = [
+        "name",
+        "city",
+        "slug",
+        "is_active",
+        "created_at",
+    ]
+    list_filter = [
+        "city__region",
+        "city",
+        "is_active",
+        "created_at",
+    ]
+    search_fields = [
+        "name",
+        "slug",
+        "city__name",
+        "city__region__name",
     ]
     prepopulated_fields = {
         "slug": ("name",),

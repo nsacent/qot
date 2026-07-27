@@ -15,6 +15,7 @@ RESERVED_FILTER_PARAMS = {
     "search",
     "category",
     "city",
+    "area",
     "region",
     "min_price",
     "max_price",
@@ -39,6 +40,7 @@ class ListingFilter(django_filters.FilterSet):
     search = django_filters.CharFilter(method="filter_search")
     category = django_filters.CharFilter(method="filter_category")
     city = django_filters.CharFilter(method="filter_city")
+    area = django_filters.CharFilter(method="filter_area")
     region = django_filters.CharFilter(method="filter_region")
     min_price = django_filters.NumberFilter(field_name="price", lookup_expr="gte")
     max_price = django_filters.NumberFilter(field_name="price", lookup_expr="lte")
@@ -54,7 +56,7 @@ class ListingFilter(django_filters.FilterSet):
     class Meta:
         model = Listing
         fields = [
-            "q", "search", "category", "city", "region", "min_price",
+            "q", "search", "category", "city", "area", "region", "min_price",
             "max_price", "condition", "status", "seller", "is_negotiable",
             "negotiable", "verified_seller", "posted_within", "sort",
         ]
@@ -68,6 +70,7 @@ class ListingFilter(django_filters.FilterSet):
             | Q(category__name__icontains=value)
             | Q(category__parent__name__icontains=value)
             | Q(city__name__icontains=value)
+            | Q(area__name__icontains=value)
             | Q(city__region__name__icontains=value)
             | Q(seller__full_name__icontains=value)
             | Q(seller__phone__icontains=value)
@@ -108,6 +111,17 @@ class ListingFilter(django_filters.FilterSet):
             query |= Q(city__region__slug=item) | Q(city__region__name__iexact=item)
             if item.isdigit():
                 query |= Q(city__region_id=int(item))
+        return queryset.filter(query)
+
+    def filter_area(self, queryset, name, value):
+        values = split_values(value)
+        if not values:
+            return queryset
+        query = Q()
+        for item in values:
+            query |= Q(area__slug=item) | Q(area__name__iexact=item)
+            if item.isdigit():
+                query |= Q(area_id=int(item))
         return queryset.filter(query)
 
     def filter_condition(self, queryset, name, value):

@@ -138,7 +138,7 @@ class SellerListingListAPIView(generics.ListAPIView):
             Listing.objects
             .filter(seller=self.request.user)
             .exclude(status=Listing.STATUS_DELETED)
-            .select_related("category", "city")
+            .select_related("category", "city", "area")
             .prefetch_related("images")
             .order_by("-created_at")
         )
@@ -273,7 +273,7 @@ class SellerListingDetailAPIView(generics.RetrieveUpdateDestroyAPIView):
         return (
             Listing.objects
             .filter(seller=self.request.user)
-            .select_related("seller", "category", "city")
+            .select_related("seller", "category", "city", "city__region", "area")
             .prefetch_related(
                 "images",
                 "attributes",

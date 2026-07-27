@@ -6,6 +6,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from apps.accounts.models import User, UserFollow
+from apps.common.permissions import IsNotBanned, IsVerifiedUser
 from apps.listings.models import Listing
 from apps.notifications.services import create_follow_notification
 
@@ -34,7 +35,7 @@ class FollowingFeedAPIView(generics.ListAPIView):
                 seller_id__in=followed_seller_ids,
                 status=Listing.STATUS_ACTIVE,
             )
-            .select_related("seller", "seller__profile", "category", "city")
+            .select_related("seller", "seller__profile", "category", "city", "area")
             .prefetch_related("images")
             .order_by("-is_featured", "-created_at")
         )
@@ -48,6 +49,7 @@ class PublicSellerListAPIView(generics.ListAPIView):
         "profile__business_name",
         "profile__bio",
         "profile__default_city__name",
+        "profile__default_area__name",
         "profile__default_city__region__name",
     ]
 
@@ -76,6 +78,7 @@ class PublicSellerListAPIView(generics.ListAPIView):
             .select_related(
                 "profile",
                 "profile__default_city",
+                "profile__default_area",
                 "profile__default_city__region",
             )
             .annotate(
@@ -123,7 +126,7 @@ class PublicSellerDetailAPIView(generics.RetrieveAPIView):
         return (
             User.objects
             .filter(is_active=True, is_banned=False)
-            .select_related("profile")
+            .select_related("profile", "profile__default_city", "profile__default_area")
         )
 
 
@@ -142,14 +145,18 @@ class PublicSellerListingListAPIView(generics.ListAPIView):
                 seller__is_banned=False,
                 status=Listing.STATUS_ACTIVE,
             )
-            .select_related("seller", "category", "city")
+            .select_related("seller", "category", "city", "area")
             .prefetch_related("images")
             .order_by("-is_featured", "-created_at")
         )
 
 
 class SellerFollowAPIView(APIView):
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [
+        permissions.IsAuthenticated,
+        IsNotBanned,
+        IsVerifiedUser,
+    ]
 
     def get_seller(self, seller_id):
         return get_object_or_404(

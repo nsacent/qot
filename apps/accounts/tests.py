@@ -18,7 +18,7 @@ from rest_framework import status
 from rest_framework.test import APITestCase
 from rest_framework_simplejwt.tokens import RefreshToken
 
-from apps.locations.models import City, Region
+from apps.locations.models import Area, City, Region
 
 from .models import User, VerificationCode
 from .sms import send_sms
@@ -684,6 +684,25 @@ class NotificationPreferenceTests(APITestCase):
         self.assertEqual(me_response.data["profile"]["default_city"], city.id)
         self.assertEqual(me_response.data["profile"]["default_city_name"], "Kampala")
         self.assertEqual(me_response.data["profile"]["default_region_name"], "Central")
+
+    def test_default_area_is_saved_and_returned_with_its_city(self):
+        region = Region.objects.create(name="Central Area", slug="central-area-profile")
+        city = City.objects.create(region=region, name="Kampala Area", slug="kampala-area-profile")
+        area = Area.objects.create(city=city, name="Kawempe", slug="kawempe-profile")
+
+        response = self.client.patch(
+            self.me_url,
+            {"default_area": area.id},
+            format="json",
+        )
+        self.user.profile.refresh_from_db()
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(self.user.profile.default_city, city)
+        self.assertEqual(self.user.profile.default_area, area)
+        self.assertEqual(response.data["profile"]["default_area"], area.id)
+        self.assertEqual(response.data["profile"]["default_area_name"], "Kawempe")
+        self.assertEqual(response.data["profile"]["default_city_name"], "Kampala Area")
 
     def test_timezone_is_saved_and_returned(self):
         response = self.client.patch(

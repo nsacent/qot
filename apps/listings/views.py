@@ -87,6 +87,7 @@ class ListingListCreateAPIView(generics.ListCreateAPIView):
                 "category__parent",
                 "city",
                 "city__region",
+                "area",
             )
             .prefetch_related(
                 "images",
@@ -268,7 +269,7 @@ class ListingListCreateAPIView(generics.ListCreateAPIView):
 def public_listing_queryset():
     return (
         Listing.objects
-        .select_related("seller", "category", "category__parent", "city", "city__region")
+        .select_related("seller", "category", "category__parent", "city", "city__region", "area")
         .filter(status=Listing.STATUS_ACTIVE)
         .filter(Q(expires_at__isnull=True) | Q(expires_at__gt=timezone.now()))
     )
@@ -366,6 +367,15 @@ class ListingFacetsAPIView(APIView):
             .annotate(count=Count("id"))
             .order_by("-count", "city__name")[:100]
         )
+        area_base = filtered_listings(request.query_params, ("area",))
+        area_counts = list(
+            area_base.exclude(area__isnull=True).values(
+                "area_id", "area__name", "area__slug",
+                "area__city_id", "area__city__name", "area__city__slug",
+            )
+            .annotate(count=Count("id"))
+            .order_by("-count", "area__name")[:100]
+        )
 
         filter_facets = {}
         category_slug = request.query_params.get("category")
@@ -413,6 +423,7 @@ class ListingFacetsAPIView(APIView):
             "price_presets": price_presets,
             "condition_counts": condition_counts,
             "cities": city_counts,
+            "areas": area_counts,
             "filters": filter_facets,
         })
 
@@ -611,6 +622,7 @@ class ListingDraftAPIView(APIView):
         "price",
         "category",
         "city",
+        "area",
         "condition",
         "is_negotiable",
         "category_filter_values",
@@ -743,7 +755,7 @@ class ListingDetailAPIView(generics.RetrieveUpdateDestroyAPIView):
     def get_queryset(self):
         queryset = (
             Listing.objects
-            .select_related("seller", "category", "category__parent", "city")
+            .select_related("seller", "category", "category__parent", "city", "city__region", "area")
             .prefetch_related(
                 "images",
                 "attributes",

@@ -20,6 +20,7 @@ class ListingReportCreateTests(APITestCase):
             full_name="Report Seller",
             password="test-password",
             is_verified=True,
+            phone_verified_at=timezone.now(),
         )
         self.reporter = User.objects.create_user(
             phone="+256700009002",
@@ -27,6 +28,7 @@ class ListingReportCreateTests(APITestCase):
             full_name="Verified Reporter",
             password="test-password",
             is_verified=True,
+            phone_verified_at=timezone.now(),
         )
         self.region = Region.objects.create(
             name="Report Test Region",

@@ -15,7 +15,7 @@ from google.auth.transport import requests as google_requests
 from google.oauth2 import id_token as google_id_token
 import requests as http_requests
 
-from apps.locations.models import City
+from apps.locations.models import Area, City
 
 from .models import User, UserFollow, UserProfile, VerificationCode
 from .phone_numbers import normalize_ugandan_phone
@@ -30,6 +30,10 @@ class UserProfileSerializer(serializers.ModelSerializer):
         source="default_city.region.name",
         read_only=True,
     )
+    default_area_name = serializers.CharField(
+        source="default_area.name",
+        read_only=True,
+    )
 
     class Meta:
         model = UserProfile
@@ -41,6 +45,8 @@ class UserProfileSerializer(serializers.ModelSerializer):
             "default_city",
             "default_city_name",
             "default_region_name",
+            "default_area",
+            "default_area_name",
             "notification_preferences",
             "timezone",
             "trust_score",
@@ -83,6 +89,18 @@ class UserProfileSerializer(serializers.ModelSerializer):
             )
 
         return value
+
+    def validate(self, attrs):
+        attrs = super().validate(attrs)
+        area = attrs.get("default_area")
+        city = attrs.get("default_city")
+        if area and city and area.city_id != city.id:
+            raise serializers.ValidationError(
+                {"default_area": ["Selected area does not belong to the selected city."]}
+            )
+        if area and not city:
+            attrs["default_city"] = area.city
+        return attrs
 
     def validate_timezone(self, value):
         return validate_timezone_name(value)
@@ -458,6 +476,12 @@ class ProfileUpdateSerializer(serializers.ModelSerializer):
         required=False,
         allow_null=True,
     )
+    default_area = serializers.PrimaryKeyRelatedField(
+        queryset=Area.objects.filter(is_active=True),
+        write_only=True,
+        required=False,
+        allow_null=True,
+    )
     timezone = serializers.CharField(
         write_only=True,
         required=False,
@@ -476,6 +500,7 @@ class ProfileUpdateSerializer(serializers.ModelSerializer):
             "bio",
             "business_name",
             "default_city",
+            "default_area",
             "timezone",
         ]
         read_only_fields = ["email"]
@@ -510,6 +535,18 @@ class ProfileUpdateSerializer(serializers.ModelSerializer):
 
         return normalized_phone
 
+    def validate(self, attrs):
+        attrs = super().validate(attrs)
+        area = attrs.get("default_area")
+        city = attrs.get("default_city")
+        if area and city and area.city_id != city.id:
+            raise serializers.ValidationError(
+                {"default_area": ["Selected area does not belong to the selected city."]}
+            )
+        if area and "default_city" not in attrs:
+            attrs["default_city"] = area.city
+        return attrs
+
     def _validate_profile_image(self, value):
         if value is None:
             return value
@@ -533,6 +570,7 @@ class ProfileUpdateSerializer(serializers.ModelSerializer):
                 "bio",
                 "business_name",
                 "default_city",
+                "default_area",
                 "timezone",
             ]
             if field in validated_data
@@ -552,6 +590,17 @@ class ProfileUpdateSerializer(serializers.ModelSerializer):
 
         if profile_data is not None or flat_profile_data:
             profile, _ = UserProfile.objects.get_or_create(user=instance)
+
+            next_city = flat_profile_data.get(
+                "default_city",
+                (profile_data or {}).get("default_city", profile.default_city),
+            )
+            next_area = flat_profile_data.get(
+                "default_area",
+                (profile_data or {}).get("default_area", profile.default_area),
+            )
+            if next_area and next_city and next_area.city_id != next_city.id:
+                flat_profile_data["default_area"] = None
 
             for field, value in {
                 **(profile_data or {}),

@@ -287,6 +287,11 @@ class ListingListSerializer(serializers.ModelSerializer):
         source="city.name",
         read_only=True,
     )
+    area_name = serializers.CharField(
+        source="area.name",
+        read_only=True,
+        allow_null=True,
+    )
     primary_image = serializers.SerializerMethodField()
     image_count = serializers.SerializerMethodField()
 
@@ -304,6 +309,8 @@ class ListingListSerializer(serializers.ModelSerializer):
             "category_parent_name",
             "city",
             "city_name",
+            "area",
+            "area_name",
             "price",
             "currency",
             "condition",
@@ -374,6 +381,11 @@ class ListingDetailSerializer(serializers.ModelSerializer):
         source="city.name",
         read_only=True,
     )
+    area_name = serializers.CharField(
+        source="area.name",
+        read_only=True,
+        allow_null=True,
+    )
 
     images = ListingImageSerializer(many=True, read_only=True)
     attributes = serializers.SerializerMethodField()
@@ -411,6 +423,8 @@ class ListingDetailSerializer(serializers.ModelSerializer):
             "category_parent_name",
             "city",
             "city_name",
+            "area",
+            "area_name",
             "description",
             "price",
             "currency",
@@ -459,6 +473,7 @@ class ListingCreateUpdateSerializer(serializers.ModelSerializer):
             "id",
             "category",
             "city",
+            "area",
             "title",
             "description",
             "price",
@@ -478,6 +493,33 @@ class ListingCreateUpdateSerializer(serializers.ModelSerializer):
             )
 
         return value
+
+    def validate(self, attrs):
+        attrs = super().validate(attrs)
+        city = attrs.get("city", getattr(self.instance, "city", None))
+        area = attrs.get("area", getattr(self.instance, "area", None))
+
+        if (
+            self.instance
+            and "city" in attrs
+            and "area" not in attrs
+            and area
+            and area.city_id != city.id
+        ):
+            attrs["area"] = None
+            area = None
+
+        if area and not area.is_active:
+            raise serializers.ValidationError(
+                {"area": ["Selected area is no longer available."]}
+            )
+
+        if area and city and area.city_id != city.id:
+            raise serializers.ValidationError(
+                {"area": ["Selected area does not belong to the selected city."]}
+            )
+
+        return attrs
 
     def validate_title(self, value):
         value = " ".join(normalize_listing_text(value).split())

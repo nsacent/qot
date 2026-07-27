@@ -5,7 +5,7 @@ from django.utils.text import slugify
 from apps.categories.models import Category
 from apps.categories.catalog_sync import sync_category_filter_catalog
 from apps.categories.models import CategoryFilter, CategoryFilterOption
-from apps.locations.models import Region, City
+from apps.locations.models import Area, City, Region
 
 CATEGORIES = [
     {
@@ -309,6 +309,16 @@ UGANDA_LOCATIONS = {
     ],
 }
 
+UGANDA_AREAS = {
+    "kampala": [
+        "Central",
+        "Kawempe",
+        "Makindye",
+        "Nakawa",
+        "Rubaga",
+    ],
+}
+
 
 class Command(BaseCommand):
     help = "Seed QOT marketplace categories and Uganda locations"
@@ -457,6 +467,27 @@ class Command(BaseCommand):
 
                 if city_update_fields:
                     city.save(update_fields=city_update_fields)
+
+                for area_name in UGANDA_AREAS.get(city.slug, []):
+                    area_slug = slugify(area_name)
+                    area, area_created = Area.objects.get_or_create(
+                        city=city,
+                        slug=area_slug,
+                        defaults={
+                            "name": area_name,
+                            "is_active": True,
+                        },
+                    )
+
+                    area_update_fields = []
+                    if area.name != area_name:
+                        area.name = area_name
+                        area_update_fields.append("name")
+                    if area.is_active is not True:
+                        area.is_active = True
+                        area_update_fields.append("is_active")
+                    if area_update_fields:
+                        area.save(update_fields=area_update_fields)
 
             region_sort += 1
 

@@ -13,7 +13,7 @@ from rest_framework.test import APITestCase
 
 from apps.accounts.models import User
 from apps.categories.models import Category, CategoryFilter, CategoryFilterOption
-from apps.locations.models import City, Region
+from apps.locations.models import Area, City, Region
 
 from .image_fingerprints import calculate_content_hash
 from .models import (
@@ -74,6 +74,7 @@ class ListingLifecycleTests(APITestCase):
             full_name="Listing Owner",
             password="test-password",
             is_verified=True,
+            phone_verified_at=timezone.now(),
         )
         self.other_user = User.objects.create_user(
             phone="+256700001002",
@@ -81,12 +82,18 @@ class ListingLifecycleTests(APITestCase):
             full_name="Listing Buyer",
             password="test-password",
             is_verified=True,
+            phone_verified_at=timezone.now(),
         )
         self.region = Region.objects.create(name="Test Region", slug="test-region")
         self.city = City.objects.create(
             region=self.region,
             name="Test City",
             slug="test-city",
+        )
+        self.area = Area.objects.create(
+            city=self.city,
+            name="Test Division",
+            slug="test-division",
         )
         self.category = Category.objects.create(
             name="Test Category",
@@ -159,6 +166,47 @@ class ListingLifecycleTests(APITestCase):
         )
 
         self.assertTrue(serializer.is_valid(), serializer.errors)
+
+    def test_ad_can_store_and_filter_by_a_more_precise_area(self):
+        listing = self.create_listing(area=self.area)
+
+        detail_response = self.client.get(f"/api/v1/listings/{listing.id}/")
+        filtered_response = self.client.get(
+            f"/api/v1/listings/?area={self.area.slug}"
+        )
+
+        self.assertEqual(detail_response.status_code, status.HTTP_200_OK)
+        self.assertEqual(detail_response.data["area"], self.area.id)
+        self.assertEqual(detail_response.data["area_name"], "Test Division")
+        self.assertEqual(filtered_response.status_code, status.HTTP_200_OK)
+        self.assertEqual(filtered_response.data["count"], 1)
+
+    def test_ad_area_must_belong_to_selected_city(self):
+        other_city = City.objects.create(
+            region=self.region,
+            name="Other City",
+            slug="other-city",
+        )
+        other_area = Area.objects.create(
+            city=other_city,
+            name="Other Division",
+            slug="other-division",
+        )
+        serializer = ListingCreateUpdateSerializer(
+            data={
+                "category": self.category.id,
+                "city": self.city.id,
+                "area": other_area.id,
+                "title": "Valid advert title",
+                "description": "A long enough description for this location validation test.",
+                "price": "100000",
+                "currency": "UGX",
+                "condition": Listing.CONDITION_USED,
+            }
+        )
+
+        self.assertFalse(serializer.is_valid())
+        self.assertIn("area", serializer.errors)
 
     def test_styled_unicode_ad_copy_is_normalized(self):
         serializer = ListingCreateUpdateSerializer(

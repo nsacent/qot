@@ -20,6 +20,7 @@ class ListingAdmin(admin.ModelAdmin):
         "seller",
         "category",
         "city",
+        "area",
         "price",
         "currency",
         "status",
@@ -32,6 +33,7 @@ class ListingAdmin(admin.ModelAdmin):
         "status",
         "category",
         "city",
+        "area",
         "condition",
         "is_featured",
         "created_at",
@@ -45,6 +47,7 @@ class ListingAdmin(admin.ModelAdmin):
         "seller__full_name",
         "category__name",
         "city__name",
+        "area__name",
     ]
 
     prepopulated_fields = {

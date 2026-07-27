@@ -14,7 +14,7 @@ class IsNotBanned(permissions.BasePermission):
 
 
 class IsVerifiedUser(permissions.BasePermission):
-    message = "Please verify your account before performing this action."
+    message = "Please verify your phone number before performing this action."
 
     def has_permission(self, request, view):
         user = request.user
@@ -22,7 +22,7 @@ class IsVerifiedUser(permissions.BasePermission):
         if not user or not user.is_authenticated:
             return False
 
-        return user.is_verified
+        return user.phone_verified
 
 
 class IsOwnerOrReadOnly(permissions.BasePermission):

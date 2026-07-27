@@ -18,6 +18,11 @@ class PublicSellerSerializer(serializers.ModelSerializer):
     following_count = serializers.SerializerMethodField()
     is_following = serializers.SerializerMethodField()
     city_name = serializers.CharField(source="profile.default_city.name", read_only=True)
+    area_name = serializers.CharField(
+        source="profile.default_area.name",
+        read_only=True,
+        allow_null=True,
+    )
     region_name = serializers.CharField(
         source="profile.default_city.region.name",
         read_only=True,
@@ -42,6 +47,7 @@ class PublicSellerSerializer(serializers.ModelSerializer):
             "following_count",
             "is_following",
             "city_name",
+            "area_name",
             "region_name",
             "date_joined",
         ]
@@ -156,6 +162,7 @@ class SellerFollowUserSerializer(serializers.ModelSerializer):
 class PublicSellerListingSerializer(serializers.ModelSerializer):
     category_name = serializers.CharField(source="category.name", read_only=True)
     city_name = serializers.CharField(source="city.name", read_only=True)
+    area_name = serializers.CharField(source="area.name", read_only=True, allow_null=True)
     primary_image = serializers.SerializerMethodField()
 
     class Meta:
@@ -168,6 +175,8 @@ class PublicSellerListingSerializer(serializers.ModelSerializer):
             "category_name",
             "city",
             "city_name",
+            "area",
+            "area_name",
             "price",
             "currency",
             "condition",
