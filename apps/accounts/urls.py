@@ -7,6 +7,8 @@ from .serializers import QOTTokenRefreshSerializer
 from .views import (
     RegisterAPIView,
     LoginAPIView,
+    SendPhoneLoginCodeAPIView,
+    ConfirmPhoneLoginCodeAPIView,
     GoogleLoginAPIView,
     FacebookLoginAPIView,
     LogoutAPIView,
@@ -27,6 +29,8 @@ class QOTTokenRefreshView(TokenRefreshView):
 urlpatterns = [
     path("register/", RegisterAPIView.as_view(), name="register"),
     path("login/", LoginAPIView.as_view(), name="login"),
+    path("otp/send/", SendPhoneLoginCodeAPIView.as_view(), name="otp_send"),
+    path("otp/confirm/", ConfirmPhoneLoginCodeAPIView.as_view(), name="otp_confirm"),
     path("google/", GoogleLoginAPIView.as_view(), name="google_login"),
     path("facebook/", FacebookLoginAPIView.as_view(), name="facebook_login"),
     path("logout/", LogoutAPIView.as_view(), name="logout"),

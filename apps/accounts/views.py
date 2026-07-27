@@ -19,6 +19,8 @@ from apps.common.emailing import build_branded_email_html
 from .serializers import (
     RegisterSerializer,
     LoginSerializer,
+    PhoneOTPRequestSerializer,
+    PhoneOTPConfirmSerializer,
     GoogleLoginSerializer,
     FacebookLoginSerializer,
     UserSerializer,
@@ -41,7 +43,7 @@ from .services import (
 from .sms import SMSConfigurationError, SMSDeliveryError
 
 
-def get_tokens_for_user(user, keep_signed_in=False):
+def get_tokens_for_user(user, keep_signed_in=True):
     refresh = RefreshToken.for_user(user)
 
     if keep_signed_in:
@@ -63,7 +65,7 @@ class RegisterAPIView(generics.CreateAPIView):
         serializer.is_valid(raise_exception=True)
 
         user = serializer.save()
-        tokens = get_tokens_for_user(user)
+        tokens = get_tokens_for_user(user, keep_signed_in=True)
 
         return Response(
             {
@@ -91,6 +93,85 @@ class LoginAPIView(APIView):
         return Response(
             {
                 "message": "Login successful.",
+                "user": UserSerializer(user).data,
+                "tokens": tokens,
+            },
+            status=status.HTTP_200_OK,
+        )
+
+
+class SendPhoneLoginCodeAPIView(APIView):
+    permission_classes = [permissions.AllowAny]
+
+    def post(self, request):
+        serializer = PhoneOTPRequestSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        phone = serializer.validated_data["phone"]
+        user = User.objects.filter(phone=phone).first()
+
+        # Keep the response generic so this endpoint cannot be used to discover
+        # whether a phone number has a QOT account.
+        if user and user.is_active and not user.is_banned:
+            try:
+                create_phone_verification_code(user)
+            except OTPRateLimitError as error:
+                return Response(
+                    {"detail": str(error), "retry_after": error.retry_after},
+                    status=status.HTTP_429_TOO_MANY_REQUESTS,
+                )
+            except (SMSConfigurationError, SMSDeliveryError) as error:
+                return Response(
+                    {"detail": str(error)},
+                    status=status.HTTP_503_SERVICE_UNAVAILABLE,
+                )
+
+        return Response(
+            {
+                "message": "If this phone number has a QOT account, a sign-in code has been sent.",
+                "destination": mask_phone(phone),
+                "expires_in": int(settings.PHONE_OTP_EXPIRY_MINUTES) * 60,
+                "resend_after": int(settings.PHONE_OTP_RESEND_SECONDS),
+            },
+            status=status.HTTP_200_OK,
+        )
+
+
+class ConfirmPhoneLoginCodeAPIView(APIView):
+    permission_classes = [permissions.AllowAny]
+
+    def post(self, request):
+        serializer = PhoneOTPConfirmSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        user = User.objects.filter(phone=serializer.validated_data["phone"]).first()
+        if user is None:
+            return Response(
+                {"detail": "The phone number or sign-in code is incorrect."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if not user.is_active:
+            return Response(
+                {"detail": "This account is inactive. Please contact QOT support."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        if user.is_banned:
+            return Response(
+                {"detail": "This account has been banned. Please contact QOT support."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        success, message = verify_phone_code(user, serializer.validated_data["code"])
+        if not success:
+            return Response(
+                {"detail": message},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        tokens = get_tokens_for_user(user, keep_signed_in=True)
+        return Response(
+            {
+                "message": "Phone sign-in successful.",
                 "user": UserSerializer(user).data,
                 "tokens": tokens,
             },

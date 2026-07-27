@@ -216,7 +216,7 @@ class LoginSerializer(serializers.Serializer):
     identifier = serializers.CharField()
     password = serializers.CharField(write_only=True)
     keep_signed_in = serializers.BooleanField(
-        default=False,
+        default=True,
         required=False,
         write_only=True,
     )
@@ -263,10 +263,27 @@ class LoginSerializer(serializers.Serializer):
         return attrs
 
 
+class PhoneOTPRequestSerializer(serializers.Serializer):
+    phone = serializers.CharField()
+
+    def validate_phone(self, value):
+        try:
+            return normalize_ugandan_phone(value)
+        except ValueError as error:
+            raise serializers.ValidationError(str(error)) from error
+
+
+class PhoneOTPConfirmSerializer(PhoneOTPRequestSerializer):
+    code = serializers.RegexField(
+        regex=r"^\d{6}$",
+        error_messages={"invalid": "Enter the 6-digit code sent to your phone."},
+    )
+
+
 class GoogleLoginSerializer(serializers.Serializer):
     credential = serializers.CharField(write_only=True)
     keep_signed_in = serializers.BooleanField(
-        default=False,
+        default=True,
         required=False,
         write_only=True,
     )
@@ -305,7 +322,7 @@ class GoogleLoginSerializer(serializers.Serializer):
 class FacebookLoginSerializer(serializers.Serializer):
     access_token = serializers.CharField(write_only=True)
     keep_signed_in = serializers.BooleanField(
-        default=False,
+        default=True,
         required=False,
         write_only=True,
     )

@@ -117,7 +117,7 @@ def create_phone_verification_code(user):
     code = generate_otp_code()
     expiry_minutes = max(1, int(settings.PHONE_OTP_EXPIRY_MINUTES))
     message = (
-        f"Your QOT Uganda verification code is {code}. "
+        f"Your QOT verification code is {code}. "
         f"It expires in {expiry_minutes} minutes. Do not share this code."
     )
 

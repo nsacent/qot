@@ -418,6 +418,78 @@ class AfricasTalkingSMSTests(APITestCase):
         self.assertEqual(request.kwargs["headers"]["apiKey"], "test-api-key")
 
 
+@override_settings(
+    AFRICAS_TALKING_USERNAME="qot-test",
+    AFRICAS_TALKING_API_KEY="test-api-key",
+    AFRICAS_TALKING_SENDER_ID="QOT",
+    PHONE_OTP_EXPIRY_MINUTES=10,
+    PHONE_OTP_RESEND_SECONDS=60,
+    PHONE_OTP_MAX_SENDS_PER_HOUR=5,
+    PHONE_OTP_MAX_ATTEMPTS=5,
+)
+class PhoneOTPLoginTests(APITestCase):
+    send_url = "/api/v1/auth/otp/send/"
+    confirm_url = "/api/v1/auth/otp/confirm/"
+
+    def setUp(self):
+        self.user = User.objects.create_user(
+            phone="+256700000088",
+            email="otp-login@example.com",
+            full_name="OTP Login User",
+            password="strong-test-password",
+        )
+
+    @staticmethod
+    def code_from_sms_mock(sms_mock):
+        match = re.search(r"\b(\d{6})\b", sms_mock.call_args.args[1])
+        return match.group(1) if match else ""
+
+    @patch("apps.accounts.services.send_sms")
+    def test_phone_otp_signs_in_and_returns_a_one_year_session(self, sms_mock):
+        send_response = self.client.post(
+            self.send_url,
+            {"phone": "+256700000088"},
+            format="json",
+        )
+        code = self.code_from_sms_mock(sms_mock)
+        confirm_response = self.client.post(
+            self.confirm_url,
+            {"phone": "+256700000088", "code": code},
+            format="json",
+        )
+
+        self.user.refresh_from_db()
+        self.assertEqual(send_response.status_code, status.HTTP_200_OK)
+        self.assertEqual(confirm_response.status_code, status.HTTP_200_OK)
+        self.assertTrue(self.user.phone_verified)
+        refresh = RefreshToken(confirm_response.data["tokens"]["refresh"])
+        lifetime = timedelta(seconds=refresh["exp"] - refresh["iat"])
+        self.assertTrue(refresh["keep_signed_in"])
+        self.assertEqual(lifetime, settings.KEEP_SIGNED_IN_LIFETIME)
+
+    @patch("apps.accounts.services.send_sms")
+    def test_unknown_phone_gets_a_generic_send_response(self, sms_mock):
+        response = self.client.post(
+            self.send_url,
+            {"phone": "+256700000077"},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertIn("If this phone number", response.data["message"])
+        sms_mock.assert_not_called()
+
+    def test_non_ugandan_phone_is_rejected(self):
+        response = self.client.post(
+            self.send_url,
+            {"phone": "+254700000088"},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("valid Ugandan mobile number", str(response.data["phone"][0]))
+
+
 class AuthenticationSessionTests(APITestCase):
     login_url = "/api/v1/auth/login/"
     refresh_url = "/api/v1/auth/token/refresh/"
@@ -430,29 +502,34 @@ class AuthenticationSessionTests(APITestCase):
             password="strong-test-password",
         )
 
-    def login(self, keep_signed_in=False):
-        return self.client.post(
-            self.login_url,
-            {
-                "identifier": self.user.email,
-                "password": "strong-test-password",
-                "keep_signed_in": keep_signed_in,
-            },
-            format="json",
-        )
+    def login(self, keep_signed_in=None):
+        data = {
+            "identifier": self.user.email,
+            "password": "strong-test-password",
+        }
+        if keep_signed_in is not None:
+            data["keep_signed_in"] = keep_signed_in
+        return self.client.post(self.login_url, data, format="json")
 
-    def test_normal_login_uses_standard_refresh_lifetime(self):
+    def test_login_defaults_to_one_year_refresh_lifetime(self):
         response = self.login()
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         refresh = RefreshToken(response.data["tokens"]["refresh"])
         lifetime = timedelta(seconds=refresh["exp"] - refresh["iat"])
 
+        self.assertTrue(refresh["keep_signed_in"])
+        self.assertEqual(lifetime, settings.KEEP_SIGNED_IN_LIFETIME)
+
+    def test_explicit_short_session_remains_supported_for_existing_clients(self):
+        response = self.login(keep_signed_in=False)
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        refresh = RefreshToken(response.data["tokens"]["refresh"])
+        lifetime = timedelta(seconds=refresh["exp"] - refresh["iat"])
+
         self.assertNotIn("keep_signed_in", refresh)
-        self.assertEqual(
-            lifetime,
-            settings.SIMPLE_JWT["REFRESH_TOKEN_LIFETIME"],
-        )
+        self.assertEqual(lifetime, settings.SIMPLE_JWT["REFRESH_TOKEN_LIFETIME"])
 
     def test_login_normalizes_a_local_ugandan_phone_number(self):
         response = self.client.post(
