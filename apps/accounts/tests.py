@@ -176,7 +176,7 @@ class PasswordResetRequestTests(APITestCase):
 @override_settings(
     AFRICAS_TALKING_USERNAME="qot-test",
     AFRICAS_TALKING_API_KEY="test-api-key",
-    AFRICAS_TALKING_SENDER_ID="QOT",
+    AFRICAS_TALKING_SENDER_ID="AT16",
     PHONE_OTP_EXPIRY_MINUTES=10,
     PHONE_OTP_RESEND_SECONDS=60,
     PHONE_OTP_MAX_SENDS_PER_HOUR=5,
@@ -219,6 +219,7 @@ class PhoneVerificationTests(APITestCase):
         self.assertEqual(response.data["channel"], "phone")
         self.assertNotIn(self.user.phone, response.data["destination"])
         sms_mock.assert_called_once()
+        self.assertIn("QOT Market", sms_mock.call_args.args[1])
 
         code = self.code_from_sms_mock(sms_mock)
         verification = VerificationCode.objects.get(user=self.user)
@@ -384,7 +385,7 @@ class PhoneVerificationTests(APITestCase):
 @override_settings(
     AFRICAS_TALKING_USERNAME="qot-production",
     AFRICAS_TALKING_API_KEY="test-api-key",
-    AFRICAS_TALKING_SENDER_ID="QOT",
+    AFRICAS_TALKING_SENDER_ID="AT16",
     AFRICAS_TALKING_SANDBOX=False,
 )
 class AfricasTalkingSMSTests(APITestCase):
@@ -414,14 +415,14 @@ class AfricasTalkingSMSTests(APITestCase):
         )
         self.assertEqual(request.kwargs["data"]["username"], "qot-production")
         self.assertEqual(request.kwargs["data"]["to"], "+256700000321")
-        self.assertEqual(request.kwargs["data"]["from"], "QOT")
+        self.assertEqual(request.kwargs["data"]["from"], "AT16")
         self.assertEqual(request.kwargs["headers"]["apiKey"], "test-api-key")
 
 
 @override_settings(
     AFRICAS_TALKING_USERNAME="qot-test",
     AFRICAS_TALKING_API_KEY="test-api-key",
-    AFRICAS_TALKING_SENDER_ID="QOT",
+    AFRICAS_TALKING_SENDER_ID="AT16",
     PHONE_OTP_EXPIRY_MINUTES=10,
     PHONE_OTP_RESEND_SECONDS=60,
     PHONE_OTP_MAX_SENDS_PER_HOUR=5,
