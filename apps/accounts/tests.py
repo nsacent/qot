@@ -20,7 +20,7 @@ from rest_framework_simplejwt.tokens import RefreshToken
 
 from apps.locations.models import Area, City, Region
 
-from .models import User, VerificationCode
+from .models import SMSDeliveryReport, User, VerificationCode
 from .sms import send_sms
 
 
@@ -209,6 +209,11 @@ class PhoneVerificationTests(APITestCase):
 
     @patch("apps.accounts.services.send_sms")
     def test_phone_otp_is_sent_and_only_a_hash_is_stored(self, sms_mock):
+        sms_mock.return_value = {
+            "message_id": "ATXid_verification_test",
+            "status": "Success",
+            "cost": "UGX 25.0000",
+        }
         response = self.client.post(
             self.send_url,
             {"channel": "phone"},
@@ -227,6 +232,13 @@ class PhoneVerificationTests(APITestCase):
         self.assertNotEqual(verification.code, code)
         self.assertTrue(check_password(code, verification.code))
         self.assertEqual(verification.channel, VerificationCode.CHANNEL_PHONE)
+        delivery = SMSDeliveryReport.objects.get(
+            provider_message_id="ATXid_verification_test"
+        )
+        self.assertEqual(delivery.verification, verification)
+        self.assertEqual(delivery.user, self.user)
+        self.assertEqual(delivery.phone, self.user.phone)
+        self.assertEqual(delivery.status, "Success")
 
     @patch("apps.accounts.services.send_sms")
     def test_correct_phone_otp_verifies_the_number_and_account(self, sms_mock):
@@ -417,6 +429,84 @@ class AfricasTalkingSMSTests(APITestCase):
         self.assertEqual(request.kwargs["data"]["to"], "+256700000321")
         self.assertEqual(request.kwargs["data"]["from"], "AT16")
         self.assertEqual(request.kwargs["headers"]["apiKey"], "test-api-key")
+
+
+@override_settings(AFRICAS_TALKING_CALLBACK_TOKEN="callback-test-token")
+class AfricasTalkingSMSDeliveryWebhookTests(APITestCase):
+    url = (
+        "/api/v1/webhooks/africas-talking/sms/delivery/"
+        "?token=callback-test-token"
+    )
+
+    def test_callback_requires_the_configured_secret(self):
+        response = self.client.post(
+            "/api/v1/webhooks/africas-talking/sms/delivery/",
+            {"id": "ATXid_unauthorised", "status": "Success"},
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertFalse(SMSDeliveryReport.objects.exists())
+
+    def test_callback_stores_and_updates_delivery_report_idempotently(self):
+        payload = {
+            "id": "ATXid_delivery_test",
+            "status": "Submitted",
+            "phoneNumber": "+256700000321",
+            "networkCode": "64110",
+            "failureReason": "",
+            "retryCount": "0",
+        }
+
+        first_response = self.client.post(self.url, payload)
+        payload["status"] = "Success"
+        second_response = self.client.post(self.url, payload)
+
+        self.assertEqual(first_response.status_code, status.HTTP_200_OK)
+        self.assertEqual(second_response.status_code, status.HTTP_200_OK)
+        self.assertEqual(SMSDeliveryReport.objects.count(), 1)
+        report = SMSDeliveryReport.objects.get(
+            provider_message_id="ATXid_delivery_test"
+        )
+        self.assertEqual(report.status, "Success")
+        self.assertEqual(report.phone, "+256700000321")
+        self.assertEqual(report.network_code, "64110")
+        self.assertEqual(report.retry_count, 0)
+
+    def test_callback_preserves_the_user_link_recorded_at_submission(self):
+        user = User.objects.create_user(
+            phone="+256700000322",
+            full_name="Delivery Report User",
+            password="strong-test-password",
+        )
+        report = SMSDeliveryReport.objects.create(
+            provider_message_id="ATXid_linked_test",
+            user=user,
+            phone=user.phone,
+            status="Sent",
+        )
+
+        response = self.client.post(
+            self.url,
+            {
+                "id": report.provider_message_id,
+                "status": "Failed",
+                "phoneNumber": user.phone,
+                "networkCode": "64110",
+                "failureReason": "DeliveryFailure",
+                "retryCount": "1",
+            },
+        )
+
+        report.refresh_from_db()
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(report.user, user)
+        self.assertEqual(report.status, "Failed")
+        self.assertEqual(report.failure_reason, "DeliveryFailure")
+
+    def test_callback_rejects_a_report_without_message_id(self):
+        response = self.client.post(self.url, {"status": "Success"})
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
 
 
 @override_settings(

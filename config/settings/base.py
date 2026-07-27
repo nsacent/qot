@@ -205,6 +205,10 @@ AFRICAS_TALKING_SENDER_ID = _africas_talking_config(
     "AFRICAS_TALKING_SENDER_ID",
     default="",
 )
+AFRICAS_TALKING_CALLBACK_TOKEN = _africas_talking_config(
+    "AFRICAS_TALKING_CALLBACK_TOKEN",
+    default="",
+)
 AFRICAS_TALKING_SANDBOX = _africas_talking_config(
     "AFRICAS_TALKING_SANDBOX",
     default=False,

@@ -1,3 +1,4 @@
+import logging
 import math
 import secrets
 from datetime import timedelta
@@ -8,9 +9,12 @@ from django.core.mail import send_mail
 from django.db import transaction
 from django.utils import timezone
 
-from .models import VerificationCode
+from .models import SMSDeliveryReport, VerificationCode
 from .sms import send_sms
 from apps.common.emailing import build_branded_email_html
+
+
+logger = logging.getLogger(__name__)
 
 
 class OTPRateLimitError(RuntimeError):
@@ -121,13 +125,29 @@ def create_phone_verification_code(user):
         f"It expires in {expiry_minutes} minutes. Do not share this code."
     )
 
-    send_sms(user.phone, message)
-
-    return _store_verification_code(
+    sms_result = send_sms(user.phone, message)
+    verification = _store_verification_code(
         user,
         VerificationCode.CHANNEL_PHONE,
         code,
     )
+
+    if isinstance(sms_result, dict) and sms_result.get("message_id"):
+        try:
+            SMSDeliveryReport.objects.update_or_create(
+                provider_message_id=str(sms_result["message_id"]),
+                defaults={
+                    "verification": verification,
+                    "user": user,
+                    "phone": user.phone,
+                    "status": str(sms_result.get("status") or ""),
+                    "cost": str(sms_result.get("cost") or ""),
+                },
+            )
+        except Exception:
+            logger.exception("Unable to store Africa's Talking SMS submission.")
+
+    return verification
 
 
 def create_email_verification_code(user):

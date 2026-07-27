@@ -247,3 +247,40 @@ class VerificationCode(models.Model):
 
     def is_expired(self):
         return timezone.now() > self.expires_at
+
+
+class SMSDeliveryReport(models.Model):
+    provider_message_id = models.CharField(max_length=150, unique=True)
+    verification = models.ForeignKey(
+        VerificationCode,
+        on_delete=models.SET_NULL,
+        related_name="sms_delivery_reports",
+        null=True,
+        blank=True,
+    )
+    user = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        related_name="sms_delivery_reports",
+        null=True,
+        blank=True,
+    )
+    phone = models.CharField(max_length=20, blank=True)
+    status = models.CharField(max_length=50, blank=True, db_index=True)
+    status_code = models.CharField(max_length=20, blank=True)
+    network_code = models.CharField(max_length=30, blank=True, db_index=True)
+    failure_reason = models.CharField(max_length=150, blank=True)
+    retry_count = models.PositiveSmallIntegerField(null=True, blank=True)
+    cost = models.CharField(max_length=50, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-updated_at"]
+        indexes = [
+            models.Index(fields=["status", "updated_at"]),
+            models.Index(fields=["phone", "updated_at"]),
+        ]
+
+    def __str__(self):
+        return f"{self.provider_message_id} - {self.status or 'Pending'}"

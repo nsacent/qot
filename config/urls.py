@@ -20,9 +20,17 @@ from django.conf.urls.static import static
 from django.contrib import admin
 from django.urls import include, path
 
+from apps.accounts.webhooks import AfricasTalkingSMSDeliveryWebhook
+
 
 urlpatterns = [
     path("admin/", admin.site.urls),
+
+    path(
+        "api/v1/webhooks/africas-talking/sms/delivery/",
+        AfricasTalkingSMSDeliveryWebhook.as_view(),
+        name="africas_talking_sms_delivery_webhook",
+    ),
 
     path("api/v1/auth/", include("apps.accounts.urls")),
     path("api/v1/locations/", include("apps.locations.urls")),

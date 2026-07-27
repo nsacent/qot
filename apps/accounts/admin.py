@@ -1,7 +1,7 @@
 from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin as BaseUserAdmin
 
-from .models import User, UserFollow, UserProfile
+from .models import SMSDeliveryReport, User, UserFollow, UserProfile
 
 
 @admin.register(User)
@@ -155,3 +155,32 @@ class UserFollowAdmin(admin.ModelAdmin):
         "following__email",
     ]
     readonly_fields = ["created_at"]
+
+
+@admin.register(SMSDeliveryReport)
+class SMSDeliveryReportAdmin(admin.ModelAdmin):
+    list_display = [
+        "provider_message_id",
+        "phone",
+        "status",
+        "network_code",
+        "failure_reason",
+        "cost",
+        "updated_at",
+    ]
+    list_filter = ["status", "network_code", "updated_at"]
+    search_fields = ["provider_message_id", "phone", "user__email"]
+    readonly_fields = [
+        "provider_message_id",
+        "verification",
+        "user",
+        "phone",
+        "status",
+        "status_code",
+        "network_code",
+        "failure_reason",
+        "retry_count",
+        "cost",
+        "created_at",
+        "updated_at",
+    ]
