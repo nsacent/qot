@@ -1115,3 +1115,95 @@ class ListingLifecycleTests(APITestCase):
         )
         self.assertEqual(title_change["before"], "Original approved advert")
         self.assertEqual(title_change["after"], "Updated approved advert")
+
+    def test_owner_can_change_ad_category_and_obsolete_specs_are_removed(self):
+        listing = self.create_listing(title="Approved advert in old category")
+        old_filter = CategoryFilter.objects.create(
+            category=self.category,
+            name="Old specification",
+            key="old-specification",
+            filter_type=CategoryFilter.TYPE_TEXT,
+        )
+        ListingAttribute.objects.create(
+            listing=listing,
+            category_filter=old_filter,
+            value_text="Old value",
+        )
+        replacement_category = Category.objects.create(
+            name="Replacement Category",
+            slug="replacement-category",
+        )
+        self.authenticate_owner()
+
+        response = self.client.patch(
+            f"/api/v1/listings/{listing.id}/",
+            {"category": replacement_category.id},
+            format="json",
+        )
+        listing.refresh_from_db()
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(listing.category, replacement_category)
+        self.assertFalse(listing.attributes.exists())
+        self.assertEqual(listing.review_submission_type, Listing.REVIEW_EDIT)
+        self.assertEqual(
+            listing.review_original_snapshot["category"],
+            "Test Category",
+        )
+
+    def test_photo_deletion_is_preserved_for_admin_edit_review(self):
+        listing = self.create_listing(title="Approved advert with photo")
+        image = ListingImage.objects.create(
+            listing=listing,
+            image=self.make_image("approved-photo.png"),
+            source_image=self.make_image("approved-source.png"),
+            is_primary=True,
+            sort_order=0,
+        )
+        self.authenticate_owner()
+
+        delete_response = self.client.delete(
+            f"/api/v1/listings/{listing.id}/images/{image.id}/"
+        )
+        update_response = self.client.patch(
+            f"/api/v1/listings/{listing.id}/",
+            {"title": "Approved advert with updated photos"},
+            format="json",
+        )
+        listing.refresh_from_db()
+
+        self.assertEqual(delete_response.status_code, status.HTTP_200_OK)
+        self.assertEqual(update_response.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(listing.review_original_snapshot["images"]), 1)
+
+        admin = User.objects.create_user(
+            phone="+256700001098",
+            full_name="Photo Review Admin",
+            password="test-password",
+            role=User.ROLE_ADMIN,
+            is_staff=True,
+        )
+        self.client.force_authenticate(admin)
+        detail = self.client.get(f"/api/v1/admin-panel/listings/{listing.id}/")
+        photo_change = next(
+            change for change in detail.data["edit_changes"]
+            if change["field"] == "photos"
+        )
+
+        self.assertIn("1 removed", photo_change["summary"])
+
+    def test_share_tracking_increments_non_deleted_ads(self):
+        listing = self.create_listing()
+        self.client.force_authenticate(user=None)
+
+        response = self.client.post(f"/api/v1/listings/{listing.id}/share/")
+        listing.refresh_from_db()
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(listing.shares_count, 1)
+        self.assertEqual(response.data["shares_count"], 1)
+
+        listing.status = Listing.STATUS_DELETED
+        listing.save(update_fields=["status", "updated_at"])
+        deleted_response = self.client.post(f"/api/v1/listings/{listing.id}/share/")
+        self.assertEqual(deleted_response.status_code, status.HTTP_404_NOT_FOUND)

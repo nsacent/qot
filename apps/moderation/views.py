@@ -11,6 +11,7 @@ from django.db.models import Q
 from apps.common.permissions import IsNotBanned, IsVerifiedUser
 from apps.listings.models import Listing
 from apps.notifications.services import (
+    create_listing_deleted_notification,
     create_listing_rejected_notification,
     notify_admins_new_report,
 )
@@ -21,6 +22,7 @@ from .models import ListingReport
 from .serializers import (
     ListingReportCreateSerializer,
     AdminListingReportSerializer,
+    ListingDeleteSerializer,
     ResolveReportSerializer,
     RejectReportedListingSerializer,
 )
@@ -270,18 +272,34 @@ class DeleteReportedListingAPIView(APIView):
                 status=status.HTTP_404_NOT_FOUND,
             )
 
-        listing = report.listing
-        listing.status = Listing.STATUS_DELETED
-        listing.save(update_fields=["status", "updated_at"])
+        serializer = ListingDeleteSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        deletion_reason = serializer.validated_data["deletion_reason"]
 
-        report.is_resolved = True
-        report.resolved_by = request.user
-        report.resolved_at = timezone.now()
-        report.save(update_fields=["is_resolved", "resolved_by", "resolved_at"])
+        listing = report.listing
+        with transaction.atomic():
+            listing.status = Listing.STATUS_DELETED
+            listing.is_featured = False
+            listing.featured_until = None
+            listing.save(
+                update_fields=[
+                    "status",
+                    "is_featured",
+                    "featured_until",
+                    "updated_at",
+                ]
+            )
+
+            report.is_resolved = True
+            report.resolved_by = request.user
+            report.resolved_at = timezone.now()
+            report.save(update_fields=["is_resolved", "resolved_by", "resolved_at"])
+
+            create_listing_deleted_notification(listing, deletion_reason)
 
         return Response(
             {
-                "message": "Listing deleted and report resolved successfully.",
+                "message": "Listing deleted, seller notified, and report resolved.",
                 "report": AdminListingReportSerializer(report).data,
             },
             status=status.HTTP_200_OK,

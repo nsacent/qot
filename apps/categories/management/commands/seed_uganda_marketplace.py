@@ -6,6 +6,7 @@ from apps.categories.models import Category
 from apps.categories.catalog_sync import sync_category_filter_catalog
 from apps.categories.models import CategoryFilter, CategoryFilterOption
 from apps.locations.models import Area, City, Region
+from apps.locations.uganda_areas import UGANDA_AREAS
 
 CATEGORIES = [
     {
@@ -174,6 +175,7 @@ CATEGORIES = [
 UGANDA_LOCATIONS = {
     "Central": [
         "Kampala",
+        "Entebbe",
         "Wakiso",
         "Mukono",
         "Masaka",
@@ -308,17 +310,6 @@ UGANDA_LOCATIONS = {
         "Mitooma",
     ],
 }
-
-UGANDA_AREAS = {
-    "kampala": [
-        "Central",
-        "Kawempe",
-        "Makindye",
-        "Nakawa",
-        "Rubaga",
-    ],
-}
-
 
 class Command(BaseCommand):
     help = "Seed QOT marketplace categories and Uganda locations"

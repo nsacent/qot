@@ -26,6 +26,7 @@ from .photo_requirements import (
     get_category_photo_requirements,
     validate_category_photo_count,
 )
+from .review_changes import ensure_listing_edit_review_snapshot
 from .permissions import IsListingOwnerOrReadOnly
 
 from decimal import Decimal, InvalidOperation
@@ -1146,6 +1147,7 @@ class ListingImageUploadAPIView(APIView):
 
         is_first_image = current_images_count == 0
         processed = process_listing_upload(validated_image)
+        ensure_listing_edit_review_snapshot(listing)
 
         image = serializer.save(
             listing=listing,
@@ -1200,6 +1202,7 @@ class ListingImageDeleteAPIView(APIView):
             serializer.is_valid(raise_exception=True)
             validated_crop = serializer.validated_data["image"]
             variants = generate_listing_crop_variants(validated_crop)
+            ensure_listing_edit_review_snapshot(listing)
             old_file_names = [
                 field.name
                 for field in (
@@ -1238,6 +1241,7 @@ class ListingImageDeleteAPIView(APIView):
             exclude_image_ids=[image.id],
         )
         processed = process_listing_upload(validated_image)
+        ensure_listing_edit_review_snapshot(listing)
         old_file_names = [
             field.name
             for field in (
@@ -1298,6 +1302,7 @@ class ListingImageDeleteAPIView(APIView):
             )
 
         was_primary = image.is_primary
+        ensure_listing_edit_review_snapshot(listing)
 
         delete_listing_image_files(image)
         image.delete()
@@ -1344,6 +1349,7 @@ class SetPrimaryListingImageAPIView(APIView):
                 status=status.HTTP_404_NOT_FOUND,
             )
 
+        ensure_listing_edit_review_snapshot(listing)
         listing.images.update(is_primary=False)
 
         image.is_primary = True
@@ -1406,6 +1412,7 @@ class ReorderListingImagesAPIView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
+        ensure_listing_edit_review_snapshot(listing)
         images_by_id = {
             image.id: image
             for image in listing.images.filter(id__in=normalized_ids)
@@ -1430,3 +1437,27 @@ class ReorderListingImagesAPIView(APIView):
             },
             status=status.HTTP_200_OK,
         )
+
+
+class TrackListingShareAPIView(APIView):
+    permission_classes = [permissions.AllowAny]
+
+    def post(self, request, pk):
+        updated = (
+            Listing.objects
+            .exclude(status=Listing.STATUS_DELETED)
+            .filter(pk=pk)
+            .update(shares_count=F("shares_count") + 1)
+        )
+
+        if not updated:
+            return Response(
+                {"detail": "Listing not found."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        shares_count = Listing.objects.values_list(
+            "shares_count",
+            flat=True,
+        ).get(pk=pk)
+        return Response({"shares_count": shares_count})

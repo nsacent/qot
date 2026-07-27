@@ -9,7 +9,7 @@ logger = logging.getLogger(__name__)
 
 ADMIN_PATH_PREFIX = "/api/v1/admin-panel/"
 MODERATION_PATH_PREFIX = "/api/v1/moderation/"
-TRACE_PATH_PREFIXES = (ADMIN_PATH_PREFIX, MODERATION_PATH_PREFIX)
+API_PATH_PREFIX = "/api/v1/"
 MUTATING_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
 MAX_JSON_BODY_BYTES = 64 * 1024
 SENSITIVE_KEY_PARTS = {
@@ -20,6 +20,11 @@ SENSITIVE_KEY_PARTS = {
     "password",
     "secret",
     "token",
+}
+PRIVATE_CONTENT_KEYS = {
+    "body",
+    "initial_message",
+    "callback_phone",
 }
 
 
@@ -62,6 +67,8 @@ def _sanitise_payload(value, depth=0):
             normalised_key = key_text.lower().replace("-", "_")
             if any(part in normalised_key for part in SENSITIVE_KEY_PARTS):
                 clean[key_text] = "[redacted]"
+            elif normalised_key in PRIVATE_CONTENT_KEYS:
+                clean[key_text] = "[content omitted]"
             else:
                 clean[key_text] = _sanitise_payload(item, depth + 1)
         return clean
@@ -133,6 +140,37 @@ def _describe_action(method, path):
         )
         return action, description, "listing report", target_id
 
+    if not path.startswith(ADMIN_PATH_PREFIX):
+        relative_path = path.removeprefix(API_PATH_PREFIX)
+        parts = [part for part in relative_path.split("/") if part]
+        resource = parts[0] if parts else "api"
+        target_id = next((part for part in parts[1:] if part.isdigit()), "")
+        operation = next(
+            (
+                part
+                for part in reversed(parts[1:])
+                if not part.isdigit()
+            ),
+            "",
+        )
+        action_name = operation or {
+            "POST": "create",
+            "PATCH": "update",
+            "PUT": "update",
+            "DELETE": "delete",
+        }.get(method, method.lower())
+        action = f"{resource}.{action_name}"
+        verb = {
+            "POST": "Submitted",
+            "PATCH": "Updated",
+            "PUT": "Updated",
+            "DELETE": "Deleted",
+        }.get(method, "Changed")
+        readable_resource = resource.replace("-", " ")
+        readable_action = action_name.replace("-", " ")
+        description = f"{verb} {readable_resource} ({readable_action})"
+        return action, description, readable_resource, target_id
+
     relative_path = path.removeprefix(ADMIN_PATH_PREFIX)
     parts = [part for part in relative_path.split("/") if part]
     resource = parts[0] if parts else "admin"
@@ -162,7 +200,7 @@ def _describe_action(method, path):
 
 
 class AdminActivityAuditMiddleware:
-    """Persist every state-changing staff moderation request after it completes."""
+    """Persist state-changing API actions with credentials safely redacted."""
 
     def __init__(self, get_response):
         self.get_response = get_response
@@ -170,7 +208,7 @@ class AdminActivityAuditMiddleware:
     def __call__(self, request):
         should_trace = (
             request.method in MUTATING_METHODS
-            and request.path.startswith(TRACE_PATH_PREFIXES)
+            and request.path.startswith(API_PATH_PREFIX)
             and not request.path.startswith(f"{ADMIN_PATH_PREFIX}activity/")
         )
         payload = _read_json_payload(request) if should_trace else {}
@@ -183,15 +221,24 @@ class AdminActivityAuditMiddleware:
 
     def _record(self, request, response, payload):
         user = getattr(request, "user", None)
-        role = str(getattr(user, "role", "") or "").lower()
-        is_staff_actor = bool(
-            user
-            and getattr(user, "is_authenticated", False)
-            and (getattr(user, "is_staff", False) or role in {"admin", "moderator"})
-        )
-
-        if not is_staff_actor:
-            return
+        authenticated = bool(user and getattr(user, "is_authenticated", False))
+        role = str(getattr(user, "role", "") or "").lower() if authenticated else "anonymous"
+        user_agent = str(request.META.get("HTTP_USER_AGENT", "") or "")[:500]
+        platform_header = str(
+            request.META.get("HTTP_X_QOT_PLATFORM", "")
+            or request.META.get("HTTP_X_CLIENT_PLATFORM", "")
+            or ""
+        ).strip().lower()
+        if platform_header in {"android", "ios", "web"}:
+            platform = platform_header
+        elif "android" in user_agent.lower() or "okhttp" in user_agent.lower():
+            platform = "android"
+        elif "iphone" in user_agent.lower() or "ipad" in user_agent.lower():
+            platform = "ios"
+        elif user_agent:
+            platform = "web"
+        else:
+            platform = "unknown"
 
         action, description, target_type, target_id = _describe_action(
             request.method,
@@ -200,10 +247,10 @@ class AdminActivityAuditMiddleware:
 
         try:
             AdminActivityLog.objects.create(
-                actor=user,
-                actor_name=getattr(user, "full_name", "") or "",
-                actor_email=getattr(user, "email", "") or "",
-                actor_role=role or ("admin" if getattr(user, "is_superuser", False) else "staff"),
+                actor=user if authenticated else None,
+                actor_name=(getattr(user, "full_name", "") or "") if authenticated else "Anonymous user",
+                actor_email=(getattr(user, "email", "") or "") if authenticated else "",
+                actor_role=role or "user",
                 action=action,
                 description=description,
                 method=request.method,
@@ -212,6 +259,8 @@ class AdminActivityAuditMiddleware:
                 target_id=target_id[:180],
                 status_code=response.status_code,
                 ip_address=_request_ip(request),
+                platform=platform,
+                user_agent=user_agent,
                 payload=payload,
             )
         except Exception:

@@ -126,3 +126,12 @@ class RejectReportedListingSerializer(serializers.Serializer):
         required=True,
         max_length=1000,
     )
+
+
+class ListingDeleteSerializer(serializers.Serializer):
+    deletion_reason = serializers.CharField(
+        min_length=10,
+        max_length=1000,
+        required=True,
+        trim_whitespace=True,
+    )

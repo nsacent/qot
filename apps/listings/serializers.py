@@ -320,6 +320,7 @@ class ListingListSerializer(serializers.ModelSerializer):
             "featured_until",
             "views_count",
             "favorites_count",
+            "shares_count",
             "image_count",
             "primary_image",
             "created_at",
@@ -331,6 +332,7 @@ class ListingListSerializer(serializers.ModelSerializer):
             "status",
             "views_count",
             "favorites_count",
+            "shares_count",
             "featured_until",
             "created_at",
         ]
@@ -435,6 +437,7 @@ class ListingDetailSerializer(serializers.ModelSerializer):
             "featured_until",
             "views_count",
             "favorites_count",
+            "shares_count",
             "expires_at",
             "sold_at",
             "rejection_reason",
@@ -451,6 +454,7 @@ class ListingDetailSerializer(serializers.ModelSerializer):
             "status",
             "views_count",
             "favorites_count",
+            "shares_count",
             "sold_at",
             "rejection_reason",
             "created_at",
@@ -555,22 +559,20 @@ class ListingCreateUpdateSerializer(serializers.ModelSerializer):
         return listing
 
     def update(self, instance, validated_data):
-        from .review_changes import build_listing_review_snapshot
+        from .review_changes import ensure_listing_edit_review_snapshot
 
         attributes_data = validated_data.pop("attributes", None)
-
-        starts_edit_review = (
-            instance.review_submission_type != Listing.REVIEW_EDIT
-            and instance.status in {
-                Listing.STATUS_ACTIVE,
-                Listing.STATUS_UNAVAILABLE,
-                Listing.STATUS_SOLD,
-                Listing.STATUS_EXPIRED,
-            }
+        updated_category = validated_data.get("category")
+        category_changed = bool(
+            updated_category and updated_category.pk != instance.category_id
         )
-        if starts_edit_review:
-            instance.review_original_snapshot = build_listing_review_snapshot(instance)
-            instance.review_submission_type = Listing.REVIEW_EDIT
+
+        if category_changed and attributes_data is None:
+            # Specifications belong to a category and must never leak into a
+            # different one when an API client changes only the category.
+            attributes_data = []
+
+        ensure_listing_edit_review_snapshot(instance)
 
         for attr, value in validated_data.items():
             setattr(instance, attr, value)

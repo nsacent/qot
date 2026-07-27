@@ -42,6 +42,8 @@ class AdminActivityLogSerializer(serializers.ModelSerializer):
             "status_code",
             "successful",
             "ip_address",
+            "platform",
+            "user_agent",
             "payload",
             "created_at",
         ]
@@ -351,6 +353,7 @@ class AdminListingSerializer(serializers.ModelSerializer):
             "expires_at",
             "views_count",
             "favorites_count",
+            "shares_count",
             "rejection_reason",
             "review_submission_type",
             "submitted_for_review_at",
@@ -475,6 +478,15 @@ class ListingRejectSerializer(serializers.Serializer):
     rejection_reason = serializers.CharField(
         max_length=1000,
         required=True,
+    )
+
+
+class ListingDeleteSerializer(serializers.Serializer):
+    deletion_reason = serializers.CharField(
+        min_length=10,
+        max_length=1000,
+        required=True,
+        trim_whitespace=True,
     )
 
 

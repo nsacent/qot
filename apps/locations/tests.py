@@ -2,6 +2,33 @@ from rest_framework import status
 from rest_framework.test import APITestCase
 
 from .models import Area, City, Region
+from .uganda_areas import UGANDA_AREAS
+
+
+class UgandaAreaCatalogTests(APITestCase):
+    def test_every_seeded_city_has_precise_areas(self):
+        from apps.categories.management.commands.seed_uganda_marketplace import (
+            UGANDA_LOCATIONS,
+        )
+        from django.utils.text import slugify
+
+        city_slugs = {
+            slugify(city_name)
+            for city_names in UGANDA_LOCATIONS.values()
+            for city_name in city_names
+        }
+
+        self.assertEqual(city_slugs, set(UGANDA_AREAS))
+        self.assertTrue(all(UGANDA_AREAS[city_slug] for city_slug in city_slugs))
+
+    def test_area_catalog_has_no_duplicate_names_within_a_city(self):
+        for city_slug, area_names in UGANDA_AREAS.items():
+            normalized = [name.casefold().strip() for name in area_names]
+            self.assertEqual(
+                len(normalized),
+                len(set(normalized)),
+                f"Duplicate areas found for {city_slug}",
+            )
 
 
 class LocationCatalogTests(APITestCase):

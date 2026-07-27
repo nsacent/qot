@@ -115,6 +115,7 @@ class Listing(models.Model):
 
     views_count = models.PositiveIntegerField(default=0)
     favorites_count = models.PositiveIntegerField(default=0)
+    shares_count = models.PositiveIntegerField(default=0)
 
     expires_at = models.DateTimeField(null=True, blank=True)
     sold_at = models.DateTimeField(null=True, blank=True)

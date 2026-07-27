@@ -17,6 +17,7 @@ from apps.listings.models import Listing, ListingAttribute, ListingImage
 from apps.locations.models import City, Region
 from apps.adminpanel.backups import create_backup, list_backups, restore_backup
 from apps.adminpanel.models import AdminActivityLog
+from apps.notifications.models import Notification
 from PIL import Image
 
 
@@ -233,6 +234,23 @@ class AdminActivityAuditTests(APITestCase):
         self.assertEqual(activity.target_type, "listing report")
         self.assertEqual(activity.target_id, "999999")
         self.assertEqual(activity.status_code, status.HTTP_404_NOT_FOUND)
+
+    def test_normal_android_user_action_is_recorded(self):
+        self.client.force_authenticate(self.user)
+
+        response = self.client.patch(
+            "/api/v1/auth/me/",
+            {"full_name": "Updated Trace User"},
+            format="json",
+            HTTP_X_QOT_PLATFORM="android",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        activity = AdminActivityLog.objects.get()
+        self.assertEqual(activity.actor, self.user)
+        self.assertEqual(activity.actor_role, User.ROLE_USER)
+        self.assertEqual(activity.platform, "android")
+        self.assertEqual(activity.action, "auth.me")
 
     def test_only_administrators_can_view_the_system_trace(self):
         AdminActivityLog.objects.create(
@@ -538,7 +556,9 @@ class AdminListingManagementTests(APITestCase):
         self.listing.save()
 
         response = self.client.post(
-            f"/api/v1/admin-panel/listings/{self.listing.id}/delete/"
+            f"/api/v1/admin-panel/listings/{self.listing.id}/delete/",
+            {"deletion_reason": "This ad violates QOT marketplace safety rules."},
+            format="json",
         )
         self.listing.refresh_from_db()
 
@@ -547,6 +567,31 @@ class AdminListingManagementTests(APITestCase):
         self.assertFalse(self.listing.is_featured)
         self.assertIsNone(self.listing.featured_until)
         self.assertEqual(response.data["listing"]["status"], Listing.STATUS_DELETED)
+        notification = Notification.objects.get(
+            user=self.seller,
+            notification_type=Notification.TYPE_LISTING_DELETED,
+        )
+        self.assertIn("violates QOT marketplace safety rules", notification.message)
+
+    def test_delete_requires_a_clear_reason_and_keeps_listing(self):
+        self.listing.status = Listing.STATUS_ACTIVE
+        self.listing.save(update_fields=["status", "updated_at"])
+
+        response = self.client.post(
+            f"/api/v1/admin-panel/listings/{self.listing.id}/delete/",
+            {"deletion_reason": "Too short"},
+            format="json",
+        )
+        self.listing.refresh_from_db()
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(self.listing.status, Listing.STATUS_ACTIVE)
+        self.assertFalse(
+            Notification.objects.filter(
+                user=self.seller,
+                notification_type=Notification.TYPE_LISTING_DELETED,
+            ).exists()
+        )
 
     def test_admin_can_edit_listing_content_without_changing_status(self):
         self.listing.status = Listing.STATUS_ACTIVE

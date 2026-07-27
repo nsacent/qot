@@ -12,6 +12,13 @@ FIELD_LABELS = {
     "city": "Location",
 }
 
+EDIT_REVIEW_SOURCE_STATUSES = {
+    "active",
+    "unavailable",
+    "sold",
+    "expired",
+}
+
 
 def _string_value(value):
     if isinstance(value, Decimal):
@@ -59,6 +66,7 @@ def build_listing_review_snapshot(listing):
                 "detail": getattr(image.image, "name", "") or "",
                 "card": getattr(image.card_image, "name", "") or "",
                 "social": getattr(image.social_image, "name", "") or "",
+                "content_hash": image.content_hash or "",
                 "sort_order": image.sort_order,
                 "is_primary": image.is_primary,
             }
@@ -86,6 +94,26 @@ def build_listing_review_snapshot(listing):
         "attributes": attributes,
         "images": images,
     }
+
+
+def ensure_listing_edit_review_snapshot(listing):
+    """Capture the approved state before the first edit-side mutation."""
+    if (
+        listing.review_submission_type == listing.REVIEW_EDIT
+        or listing.status not in EDIT_REVIEW_SOURCE_STATUSES
+    ):
+        return False
+
+    listing.review_original_snapshot = build_listing_review_snapshot(listing)
+    listing.review_submission_type = listing.REVIEW_EDIT
+    listing.save(
+        update_fields=[
+            "review_original_snapshot",
+            "review_submission_type",
+            "updated_at",
+        ]
+    )
+    return True
 
 
 def diff_listing_review_snapshots(before, after):
@@ -139,6 +167,16 @@ def diff_listing_review_snapshots(before, after):
             or old_by_id[key].get("social") != new_by_id[key].get("social")
         )
     ]
+    replaced = [
+        key
+        for key in set(old_by_id) & set(new_by_id)
+        if (
+            old_by_id[key].get("content_hash") != new_by_id[key].get("content_hash")
+            or old_by_id[key].get("source") != new_by_id[key].get("source")
+            or old_by_id[key].get("detail") != new_by_id[key].get("detail")
+        )
+    ]
+    crop_changed = [key for key in crop_changed if key not in replaced]
     old_order = [str(item.get("id")) for item in old_images]
     new_order = [str(item.get("id")) for item in new_images]
     old_primary = next(
@@ -155,6 +193,8 @@ def diff_listing_review_snapshots(before, after):
         photo_notes.append(f"{len(added)} added")
     if removed:
         photo_notes.append(f"{len(removed)} removed")
+    if replaced:
+        photo_notes.append(f"{len(replaced)} replaced")
     if crop_changed:
         photo_notes.append(f"{len(crop_changed)} display crop changed")
     if old_order != new_order:

@@ -1,5 +1,6 @@
 import logging
 
+from django.db import transaction
 from django.db.models import Count, Sum, Q
 from django.http import FileResponse
 from django.core.files.storage import default_storage
@@ -47,6 +48,7 @@ from .serializers import (
     AdminListingDetailSerializer,
     AdminListingUpdateSerializer,
     ListingRejectSerializer,
+    ListingDeleteSerializer,
     UserBanSerializer,
     FeatureListingSerializer,
     AdminPaymentSerializer,
@@ -65,6 +67,7 @@ from .serializers import (
 from apps.notifications.services import (
     create_listing_approved_notification,
     create_listing_rejected_notification,
+    create_listing_deleted_notification,
     create_payment_paid_notification,
     create_payment_failed_notification,
 )
@@ -115,6 +118,7 @@ class AdminActivityLogListAPIView(generics.ListAPIView):
         result = self.request.query_params.get("result")
         action = self.request.query_params.get("action")
         target_type = self.request.query_params.get("target_type")
+        platform = self.request.query_params.get("platform")
         date_from = self.request.query_params.get("date_from")
         date_to = self.request.query_params.get("date_to")
 
@@ -130,8 +134,11 @@ class AdminActivityLogListAPIView(generics.ListAPIView):
         if actor:
             queryset = queryset.filter(actor_id=actor)
 
-        if role in {User.ROLE_ADMIN, User.ROLE_MODERATOR}:
+        if role:
             queryset = queryset.filter(actor_role=role)
+
+        if platform in {"web", "android", "ios", "unknown"}:
+            queryset = queryset.filter(platform=platform)
 
         if result == "success":
             queryset = queryset.filter(status_code__lt=400)
@@ -160,6 +167,12 @@ class AdminActivityLogListAPIView(generics.ListAPIView):
             failed=Count("id", filter=Q(status_code__gte=400)),
             administrators=Count("id", filter=Q(actor_role=User.ROLE_ADMIN)),
             moderators=Count("id", filter=Q(actor_role=User.ROLE_MODERATOR)),
+            users=Count(
+                "id",
+                filter=~Q(actor_role__in=[User.ROLE_ADMIN, User.ROLE_MODERATOR, "anonymous"]),
+            ),
+            web=Count("id", filter=Q(platform="web")),
+            android=Count("id", filter=Q(platform="android")),
         )
         page = self.paginate_queryset(queryset)
 
@@ -822,22 +835,29 @@ class DeleteListingAPIView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        listing.status = Listing.STATUS_DELETED
-        listing.is_featured = False
-        listing.featured_until = None
-        listing.save(
-            update_fields=[
-                "status",
-                "is_featured",
-                "featured_until",
-                "updated_at",
-            ]
-        )
+        serializer = ListingDeleteSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        deletion_reason = serializer.validated_data["deletion_reason"]
+
+        with transaction.atomic():
+            listing.status = Listing.STATUS_DELETED
+            listing.is_featured = False
+            listing.featured_until = None
+            listing.save(
+                update_fields=[
+                    "status",
+                    "is_featured",
+                    "featured_until",
+                    "updated_at",
+                ]
+            )
+            create_listing_deleted_notification(listing, deletion_reason)
+
         calculate_user_trust_score(listing.seller)
 
         return Response(
             {
-                "message": "Listing deleted successfully.",
+                "message": "Listing deleted and the seller was notified.",
                 "listing": AdminListingDetailSerializer(
                     listing,
                     context={"request": request},

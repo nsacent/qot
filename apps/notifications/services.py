@@ -62,6 +62,12 @@ def _send_branded_email(
 
 
 def _notification_action(notification):
+    if notification.notification_type == Notification.TYPE_LISTING_DELETED:
+        return (
+            _frontend_url("/account/notifications"),
+            "View removal details",
+        )
+
     if notification.chat_thread_id:
         return (
             _frontend_url(f"/account/messages/{notification.chat_thread_id}"),
@@ -75,6 +81,9 @@ def _notification_action(notification):
 
 
 def _notification_app_url(notification):
+    if notification.notification_type == Notification.TYPE_LISTING_DELETED:
+        return "qot://notifications"
+
     if notification.chat_thread_id:
         return f"qot://messages/{notification.chat_thread_id}"
 
@@ -405,6 +414,21 @@ def create_listing_rejected_notification(listing):
         message=f"Your ad '{listing.title}' was rejected. Reason: {reason}",
         listing=listing,
         preference_key="listing_rejections",
+    )
+
+
+def create_listing_deleted_notification(listing, reason):
+    clean_reason = " ".join(str(reason or "").split())
+
+    return create_notification(
+        user=listing.seller,
+        notification_type=Notification.TYPE_LISTING_DELETED,
+        title="Your ad was removed by QOT",
+        message=(
+            f"Your ad '{listing.title}' was removed by QOT. "
+            f"Reason: {clean_reason}"
+        ),
+        listing=listing,
     )
 
 
