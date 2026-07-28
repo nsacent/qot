@@ -105,6 +105,8 @@ class ListingListCreateAPIView(generics.ListCreateAPIView):
 
         return queryset.filter(
             status=Listing.STATUS_ACTIVE,
+            seller__is_active=True,
+            seller__is_banned=False,
         ).filter(
             Q(expires_at__isnull=True) | Q(expires_at__gt=timezone.now())
         )
@@ -271,7 +273,11 @@ def public_listing_queryset():
     return (
         Listing.objects
         .select_related("seller", "category", "category__parent", "city", "city__region", "area")
-        .filter(status=Listing.STATUS_ACTIVE)
+        .filter(
+            status=Listing.STATUS_ACTIVE,
+            seller__is_active=True,
+            seller__is_banned=False,
+        )
         .filter(Q(expires_at__isnull=True) | Q(expires_at__gt=timezone.now()))
     )
 
@@ -768,7 +774,11 @@ class ListingDetailAPIView(generics.RetrieveUpdateDestroyAPIView):
         if self.request.method not in permissions.SAFE_METHODS:
             return queryset
 
-        public_listings = Q(status=Listing.STATUS_ACTIVE) & (
+        public_listings = Q(
+            status=Listing.STATUS_ACTIVE,
+            seller__is_active=True,
+            seller__is_banned=False,
+        ) & (
             Q(expires_at__isnull=True) | Q(expires_at__gt=timezone.now())
         )
 

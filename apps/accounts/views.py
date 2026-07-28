@@ -13,9 +13,11 @@ from django.utils.http import urlsafe_base64_encode
 
 from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework_simplejwt.exceptions import TokenError
+from rest_framework_simplejwt.token_blacklist.models import BlacklistedToken, OutstandingToken
 
 from .models import User
 from apps.common.emailing import build_branded_email_html
+from apps.notifications.models import PushDevice
 from .serializers import (
     RegisterSerializer,
     LoginSerializer,
@@ -112,7 +114,7 @@ class SendPhoneLoginCodeAPIView(APIView):
 
         # Keep the response generic so this endpoint cannot be used to discover
         # whether a phone number has a QOT account.
-        if user and user.is_active and not user.is_banned:
+        if user and (user.is_active or user.is_frozen) and not user.is_banned:
             try:
                 create_phone_verification_code(user)
             except OTPRateLimitError as error:
@@ -150,7 +152,7 @@ class ConfirmPhoneLoginCodeAPIView(APIView):
                 {"detail": "The phone number or sign-in code is incorrect."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        if not user.is_active:
+        if not user.is_active and not user.is_frozen:
             return Response(
                 {"detail": "This account is inactive. Please contact QOT support."},
                 status=status.HTTP_403_FORBIDDEN,
@@ -168,10 +170,21 @@ class ConfirmPhoneLoginCodeAPIView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
+        reactivated = user.is_frozen
+        if reactivated:
+            user.is_active = True
+            user.is_frozen = False
+            user.frozen_at = None
+            user.save(update_fields=["is_active", "is_frozen", "frozen_at", "updated_at"])
+
         tokens = get_tokens_for_user(user, keep_signed_in=True)
         return Response(
             {
-                "message": "Phone sign-in successful.",
+                "message": (
+                    "Account reactivated and phone sign-in successful."
+                    if reactivated
+                    else "Phone sign-in successful."
+                ),
                 "user": UserSerializer(user).data,
                 "tokens": tokens,
             },
@@ -500,6 +513,44 @@ class MeAPIView(generics.RetrieveUpdateAPIView):
 
     def get_object(self):
         return self.request.user
+
+
+class FreezeAccountAPIView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        if request.data.get("confirmation") is not True:
+            return Response(
+                {"confirmation": ["Confirm that you want to freeze this account."]},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        user = request.user
+
+        if user.is_staff or user.is_superuser:
+            return Response(
+                {"detail": "Administrator accounts cannot be frozen here."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        user.is_active = False
+        user.is_frozen = True
+        user.frozen_at = timezone.now()
+        user.save(update_fields=["is_active", "is_frozen", "frozen_at", "updated_at"])
+
+        PushDevice.objects.filter(user=user, is_active=True).update(is_active=False)
+        for outstanding_token in OutstandingToken.objects.filter(user=user):
+            BlacklistedToken.objects.get_or_create(token=outstanding_token)
+
+        return Response(
+            {
+                "message": (
+                    "Your QOT account is frozen. Your public profile and ads are hidden. "
+                    "Sign in with a phone OTP whenever you want to reactivate it."
+                )
+            },
+            status=status.HTTP_200_OK,
+        )
     
 
 class SendVerificationCodeAPIView(APIView):

@@ -16,7 +16,11 @@ class HomeAPIView(APIView):
     def get_base_queryset(self):
         return (
             Listing.objects
-            .filter(status=Listing.STATUS_ACTIVE)
+            .filter(
+                status=Listing.STATUS_ACTIVE,
+                seller__is_active=True,
+                seller__is_banned=False,
+            )
             .filter(
                 Q(expires_at__isnull=True) | Q(expires_at__gt=timezone.now())
             )

@@ -40,6 +40,8 @@ class User(AbstractBaseUser, PermissionsMixin):
     role = models.CharField(max_length=20, choices=ROLE_CHOICES, default=ROLE_USER)
 
     is_active = models.BooleanField(default=True)
+    is_frozen = models.BooleanField(default=False, db_index=True)
+    frozen_at = models.DateTimeField(null=True, blank=True)
     is_staff = models.BooleanField(default=False)
     is_verified = models.BooleanField(default=False)
     phone_verified_at = models.DateTimeField(null=True, blank=True)

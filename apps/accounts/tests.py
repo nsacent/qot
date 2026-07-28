@@ -559,6 +559,34 @@ class PhoneOTPLoginTests(APITestCase):
         self.assertEqual(lifetime, settings.KEEP_SIGNED_IN_LIFETIME)
 
     @patch("apps.accounts.services.send_sms")
+    def test_phone_otp_reactivates_a_frozen_account(self, sms_mock):
+        self.user.is_active = False
+        self.user.is_frozen = True
+        self.user.frozen_at = timezone.now()
+        self.user.save(update_fields=["is_active", "is_frozen", "frozen_at"])
+
+        send_response = self.client.post(
+            self.send_url,
+            {"phone": self.user.phone},
+            format="json",
+        )
+        code = self.code_from_sms_mock(sms_mock)
+        confirm_response = self.client.post(
+            self.confirm_url,
+            {"phone": self.user.phone, "code": code},
+            format="json",
+        )
+
+        self.user.refresh_from_db()
+        self.assertEqual(send_response.status_code, status.HTTP_200_OK)
+        self.assertEqual(confirm_response.status_code, status.HTTP_200_OK)
+        self.assertTrue(self.user.is_active)
+        self.assertFalse(self.user.is_frozen)
+        self.assertIsNone(self.user.frozen_at)
+        self.assertTrue(self.user.phone_verified)
+        self.assertIn("reactivated", confirm_response.data["message"].lower())
+
+    @patch("apps.accounts.services.send_sms")
     def test_unknown_phone_gets_a_generic_send_response(self, sms_mock):
         response = self.client.post(
             self.send_url,
@@ -579,6 +607,40 @@ class PhoneOTPLoginTests(APITestCase):
 
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertIn("valid Ugandan mobile number", str(response.data["phone"][0]))
+
+
+class AccountFreezeTests(APITestCase):
+    freeze_url = "/api/v1/auth/account/freeze/"
+
+    def setUp(self):
+        self.user = User.objects.create_user(
+            phone="+256700000089",
+            email="freeze@example.com",
+            full_name="Freeze Test",
+            password="strong-test-password",
+        )
+        self.client.force_authenticate(self.user)
+
+    def test_freeze_requires_explicit_confirmation(self):
+        response = self.client.post(self.freeze_url, {}, format="json")
+
+        self.user.refresh_from_db()
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertTrue(self.user.is_active)
+        self.assertFalse(self.user.is_frozen)
+
+    def test_freeze_hides_and_deactivates_the_account(self):
+        response = self.client.post(
+            self.freeze_url,
+            {"confirmation": True},
+            format="json",
+        )
+
+        self.user.refresh_from_db()
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertFalse(self.user.is_active)
+        self.assertTrue(self.user.is_frozen)
+        self.assertIsNotNone(self.user.frozen_at)
 
 
 class AuthenticationSessionTests(APITestCase):

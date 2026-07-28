@@ -23,6 +23,8 @@ class FavoriteListAPIView(generics.ListAPIView):
             .filter(
                 user=self.request.user,
                 listing__status=Listing.STATUS_ACTIVE,
+                listing__seller__is_active=True,
+                listing__seller__is_banned=False,
             )
             .select_related(
                 "listing",
@@ -48,6 +50,8 @@ class FavoriteToggleAPIView(APIView):
             listing = Listing.objects.get(
                 pk=listing_id,
                 status=Listing.STATUS_ACTIVE,
+                seller__is_active=True,
+                seller__is_banned=False,
             )
         except Listing.DoesNotExist:
             return Response(

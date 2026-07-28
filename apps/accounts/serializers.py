@@ -136,6 +136,8 @@ class UserSerializer(serializers.ModelSerializer):
             "full_name",
             "role",
             "is_verified",
+            "is_frozen",
+            "frozen_at",
             "phone_verified",
             "phone_verified_at",
             "email_verified",
@@ -150,6 +152,8 @@ class UserSerializer(serializers.ModelSerializer):
             "id",
             "role",
             "is_verified",
+            "is_frozen",
+            "frozen_at",
             "phone_verified",
             "phone_verified_at",
             "email_verified",
@@ -265,6 +269,11 @@ class LoginSerializer(serializers.Serializer):
         if not user.check_password(password):
             raise AuthenticationFailed(
                 "The phone/email or password is incorrect."
+            )
+
+        if user.is_frozen:
+            raise PermissionDenied(
+                "This account is frozen. Sign in with your phone OTP to reactivate it."
             )
 
         if not user.is_active:

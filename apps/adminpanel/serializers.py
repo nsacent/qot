@@ -64,6 +64,8 @@ class AdminUserSerializer(serializers.ModelSerializer):
             "full_name",
             "role",
             "is_active",
+            "is_frozen",
+            "frozen_at",
             "is_verified",
             "is_banned",
             "banned_reason",

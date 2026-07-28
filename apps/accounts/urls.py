@@ -13,6 +13,7 @@ from .views import (
     FacebookLoginAPIView,
     LogoutAPIView,
     MeAPIView,
+    FreezeAccountAPIView,
     PasswordResetRequestAPIView,
     PasswordResetConfirmAPIView,
     SendVerificationCodeAPIView,
@@ -36,6 +37,7 @@ urlpatterns = [
     path("logout/", LogoutAPIView.as_view(), name="logout"),
     path("token/refresh/", QOTTokenRefreshView.as_view(), name="token_refresh"),
     path("me/", MeAPIView.as_view(), name="me"),
+    path("account/freeze/", FreezeAccountAPIView.as_view(), name="account_freeze"),
 
     path(
         "password-reset/request/",
