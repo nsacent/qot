@@ -1,9 +1,7 @@
-import hashlib
-import hmac
-
 from django.conf import settings
 from django.contrib.auth import authenticate
 from django.contrib.auth.tokens import default_token_generator
+from django.utils import timezone
 from django.utils.encoding import force_str
 from django.utils.http import urlsafe_base64_decode
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -11,13 +9,14 @@ from rest_framework import serializers
 from rest_framework.exceptions import AuthenticationFailed, PermissionDenied
 from rest_framework_simplejwt.serializers import TokenRefreshSerializer
 from rest_framework_simplejwt.tokens import RefreshToken
+from rest_framework_simplejwt.token_blacklist.models import OutstandingToken
+from rest_framework_simplejwt.utils import datetime_from_epoch
 from google.auth.transport import requests as google_requests
 from google.oauth2 import id_token as google_id_token
-import requests as http_requests
 
 from apps.locations.models import Area, City
 
-from .models import User, UserFollow, UserProfile, VerificationCode
+from .models import User, UserFollow, UserProfile, UserSession, VerificationCode
 from .phone_numbers import normalize_ugandan_phone
 
 
@@ -42,6 +41,7 @@ class UserProfileSerializer(serializers.ModelSerializer):
             "cover_photo",
             "bio",
             "business_name",
+            "alternative_phone",
             "default_city",
             "default_city_name",
             "default_region_name",
@@ -104,6 +104,23 @@ class UserProfileSerializer(serializers.ModelSerializer):
 
     def validate_timezone(self, value):
         return validate_timezone_name(value)
+
+    def validate_alternative_phone(self, value):
+        if not value:
+            return None
+
+        try:
+            normalized_phone = normalize_ugandan_phone(value)
+        except ValueError as error:
+            raise serializers.ValidationError(str(error)) from error
+
+        request = self.context.get("request")
+        if request and request.user.is_authenticated and request.user.phone == normalized_phone:
+            raise serializers.ValidationError(
+                "Use a different number from your primary verified phone."
+            )
+
+        return normalized_phone
 
 
 def validate_timezone_name(value):
@@ -169,6 +186,35 @@ class UserSerializer(serializers.ModelSerializer):
 
     def get_following_count(self, obj):
         return obj.following_relationships.count()
+
+
+class UserSessionSerializer(serializers.ModelSerializer):
+    is_current = serializers.SerializerMethodField()
+
+    class Meta:
+        model = UserSession
+        fields = [
+            "id",
+            "device_name",
+            "device_model",
+            "platform",
+            "os_name",
+            "os_version",
+            "app_version",
+            "ip_address",
+            "is_current",
+            "created_at",
+            "last_seen_at",
+            "expires_at",
+        ]
+        read_only_fields = fields
+
+    def get_is_current(self, obj):
+        current_session_id = self.context.get("current_session_id")
+        current_device_id = self.context.get("current_device_id")
+        if current_session_id:
+            return str(obj.id) == str(current_session_id)
+        return bool(current_device_id and obj.device_id == current_device_id)
 
 
 class RegisterSerializer(serializers.ModelSerializer):
@@ -346,107 +392,26 @@ class GoogleLoginSerializer(serializers.Serializer):
         return attrs
 
 
-class FacebookLoginSerializer(serializers.Serializer):
-    access_token = serializers.CharField(write_only=True)
-    keep_signed_in = serializers.BooleanField(
-        default=True,
-        required=False,
-        write_only=True,
-    )
-
-    def _graph_request(self, path, params):
-        version = settings.FACEBOOK_GRAPH_API_VERSION
-
-        try:
-            response = http_requests.get(
-                f"https://graph.facebook.com/{version}/{path}",
-                params=params,
-                timeout=10,
-            )
-            payload = response.json()
-        except (http_requests.RequestException, ValueError, TypeError) as error:
-            raise serializers.ValidationError(
-                {"detail": "Facebook could not verify this sign-in. Please try again."}
-            ) from error
-
-        if (
-            not isinstance(payload, dict)
-            or response.status_code >= 400
-            or payload.get("error")
-        ):
-            raise serializers.ValidationError(
-                {"detail": "Facebook could not verify this sign-in. Please try again."}
-            )
-
-        return payload
-
-    def validate(self, attrs):
-        app_id = settings.FACEBOOK_OAUTH_APP_ID
-        app_secret = settings.FACEBOOK_OAUTH_APP_SECRET
-
-        if not app_id or not app_secret:
-            raise serializers.ValidationError(
-                {"detail": "Facebook sign-in is not configured on the server."}
-            )
-
-        access_token = attrs["access_token"]
-        debug_payload = self._graph_request(
-            "debug_token",
-            {
-                "input_token": access_token,
-                "access_token": f"{app_id}|{app_secret}",
-            },
-        ).get("data", {})
-
-        if (
-            debug_payload.get("is_valid") is not True
-            or str(debug_payload.get("app_id") or "") != str(app_id)
-            or not debug_payload.get("user_id")
-        ):
-            raise serializers.ValidationError(
-                {"detail": "Facebook returned an invalid sign-in token."}
-            )
-
-        app_secret_proof = hmac.new(
-            app_secret.encode(),
-            access_token.encode(),
-            hashlib.sha256,
-        ).hexdigest()
-        identity = self._graph_request(
-            "me",
-            {
-                "fields": "id,name,email,first_name,last_name,picture.type(large)",
-                "access_token": access_token,
-                "appsecret_proof": app_secret_proof,
-            },
-        )
-
-        subject = str(identity.get("id") or "").strip()
-        email = str(identity.get("email") or "").strip().lower()
-
-        if subject != str(debug_payload["user_id"]) or not email:
-            raise serializers.ValidationError(
-                {
-                    "detail": (
-                        "Facebook did not provide an email address. "
-                        "Allow email access and try again."
-                    )
-                }
-            )
-
-        attrs["identity"] = {
-            "sub": subject,
-            "email": email,
-            "name": str(identity.get("name") or "").strip(),
-            "given_name": str(identity.get("first_name") or "").strip(),
-            "family_name": str(identity.get("last_name") or "").strip(),
-            "picture": identity.get("picture"),
-        }
-        return attrs
-
-
 class QOTTokenRefreshSerializer(TokenRefreshSerializer):
     def validate(self, attrs):
+        original_refresh = RefreshToken(attrs["refresh"])
+        original_jti = str(original_refresh.get("jti") or "")
+        session_id = original_refresh.get("session_id")
+
+        session = None
+        if session_id:
+            session = UserSession.objects.filter(
+                id=session_id,
+                refresh_jti=original_jti,
+                is_active=True,
+                expires_at__gt=timezone.now(),
+            ).first()
+            if session is None:
+                raise AuthenticationFailed(
+                    "This device has been signed out. Please sign in again.",
+                    code="device_signed_out",
+                )
+
         data = super().validate(attrs)
         rotated_token = data.get("refresh")
 
@@ -455,9 +420,30 @@ class QOTTokenRefreshSerializer(TokenRefreshSerializer):
 
         refresh = RefreshToken(rotated_token)
 
-        if refresh.get("keep_signed_in"):
+        if original_refresh.get("keep_signed_in"):
+            refresh["keep_signed_in"] = True
             refresh.set_exp(lifetime=settings.KEEP_SIGNED_IN_LIFETIME)
-            data["refresh"] = str(refresh)
+
+        if session:
+            refresh["session_id"] = str(session.id)
+
+        final_refresh = str(refresh)
+        final_expiry = datetime_from_epoch(refresh["exp"])
+        OutstandingToken.objects.filter(jti=refresh["jti"]).update(
+            token=final_refresh,
+            expires_at=final_expiry,
+        )
+
+        if session:
+            session.refresh_jti = str(refresh["jti"])
+            session.last_seen_at = timezone.now()
+            session.expires_at = final_expiry
+            session.save(
+                update_fields=["refresh_jti", "last_seen_at", "expires_at"]
+            )
+
+        data["refresh"] = final_refresh
+        data["access"] = str(refresh.access_token)
 
         return data
 
@@ -496,6 +482,13 @@ class ProfileUpdateSerializer(serializers.ModelSerializer):
         required=False,
         max_length=64,
     )
+    alternative_phone = serializers.CharField(
+        write_only=True,
+        required=False,
+        allow_blank=True,
+        allow_null=True,
+        max_length=20,
+    )
 
     class Meta:
         model = User
@@ -508,6 +501,7 @@ class ProfileUpdateSerializer(serializers.ModelSerializer):
             "cover_photo",
             "bio",
             "business_name",
+            "alternative_phone",
             "default_city",
             "default_area",
             "timezone",
@@ -522,6 +516,21 @@ class ProfileUpdateSerializer(serializers.ModelSerializer):
 
     def validate_timezone(self, value):
         return validate_timezone_name(value)
+
+    def validate_alternative_phone(self, value):
+        if not value:
+            return None
+
+        try:
+            normalized_phone = normalize_ugandan_phone(value)
+        except ValueError as error:
+            raise serializers.ValidationError(str(error)) from error
+
+        if self.instance and self.instance.phone == normalized_phone:
+            raise serializers.ValidationError(
+                "Use a different number from your primary verified phone."
+            )
+        return normalized_phone
 
     def validate_phone(self, value):
         if not value:
@@ -578,6 +587,7 @@ class ProfileUpdateSerializer(serializers.ModelSerializer):
                 "cover_photo",
                 "bio",
                 "business_name",
+                "alternative_phone",
                 "default_city",
                 "default_area",
                 "timezone",

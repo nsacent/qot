@@ -158,7 +158,7 @@ AUTH_PASSWORD_VALIDATORS = [
 
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": [
-        "rest_framework_simplejwt.authentication.JWTAuthentication",
+        "apps.accounts.authentication.SessionAwareJWTAuthentication",
     ],
 
     "DEFAULT_PERMISSION_CLASSES": [
@@ -186,12 +186,6 @@ SIMPLE_JWT = {
 
 KEEP_SIGNED_IN_LIFETIME = timedelta(days=365)
 GOOGLE_OAUTH_CLIENT_ID = config("GOOGLE_OAUTH_CLIENT_ID", default="")
-FACEBOOK_OAUTH_APP_ID = config("FACEBOOK_OAUTH_APP_ID", default="")
-FACEBOOK_OAUTH_APP_SECRET = config("FACEBOOK_OAUTH_APP_SECRET", default="")
-FACEBOOK_GRAPH_API_VERSION = config(
-    "FACEBOOK_GRAPH_API_VERSION",
-    default="v25.0",
-)
 
 AFRICAS_TALKING_USERNAME = _africas_talking_config(
     "AFRICAS_TALKING_USERNAME",

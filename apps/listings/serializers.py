@@ -374,6 +374,11 @@ class ListingDetailSerializer(serializers.ModelSerializer):
         source="seller.phone",
         read_only=True,
     )
+    seller_alternative_phone = serializers.CharField(
+        source="seller.profile.alternative_phone",
+        read_only=True,
+        allow_null=True,
+    )
     category_name = serializers.CharField(
         source="category.name",
         read_only=True,
@@ -420,6 +425,7 @@ class ListingDetailSerializer(serializers.ModelSerializer):
             "seller",
             "seller_name",
             "seller_phone",
+            "seller_alternative_phone",
             "category",
             "category_name",
             "category_parent_name",

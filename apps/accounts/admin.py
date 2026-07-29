@@ -1,7 +1,7 @@
 from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin as BaseUserAdmin
 
-from .models import SMSDeliveryReport, User, UserFollow, UserProfile
+from .models import SMSDeliveryReport, User, UserFollow, UserProfile, UserSession
 
 
 @admin.register(User)
@@ -159,6 +159,45 @@ class UserFollowAdmin(admin.ModelAdmin):
         "following__email",
     ]
     readonly_fields = ["created_at"]
+
+
+@admin.register(UserSession)
+class UserSessionAdmin(admin.ModelAdmin):
+    list_display = [
+        "user",
+        "device_name",
+        "device_model",
+        "platform",
+        "is_active",
+        "last_seen_at",
+        "expires_at",
+    ]
+    list_filter = ["platform", "is_active", "created_at", "last_seen_at"]
+    search_fields = [
+        "user__phone",
+        "user__email",
+        "device_name",
+        "device_model",
+        "device_id",
+    ]
+    readonly_fields = [
+        "id",
+        "user",
+        "refresh_jti",
+        "device_id",
+        "device_name",
+        "device_model",
+        "platform",
+        "os_name",
+        "os_version",
+        "app_version",
+        "ip_address",
+        "user_agent",
+        "created_at",
+        "last_seen_at",
+        "expires_at",
+        "revoked_at",
+    ]
 
 
 @admin.register(SMSDeliveryReport)

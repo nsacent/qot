@@ -15,12 +15,12 @@ from django.test import override_settings
 from django.utils import timezone
 from PIL import Image
 from rest_framework import status
-from rest_framework.test import APITestCase
+from rest_framework.test import APIClient, APITestCase
 from rest_framework_simplejwt.tokens import RefreshToken
 
 from apps.locations.models import Area, City, Region
 
-from .models import SMSDeliveryReport, User, VerificationCode
+from .models import SMSDeliveryReport, User, UserSession, VerificationCode
 from .sms import send_sms
 
 
@@ -1021,118 +1021,150 @@ class GoogleAuthenticationTests(APITestCase):
         self.assertFalse(User.objects.filter(email="google-user@example.com").exists())
 
 
-@override_settings(
-    FACEBOOK_OAUTH_APP_ID="qot-facebook-test",
-    FACEBOOK_OAUTH_APP_SECRET="facebook-test-secret",
-    FACEBOOK_GRAPH_API_VERSION="v25.0",
-)
-class FacebookAuthenticationTests(APITestCase):
-    facebook_url = "/api/v1/auth/facebook/"
+class SignedInDeviceTests(APITestCase):
+    login_url = "/api/v1/auth/login/"
 
-    def graph_response(self, payload, status_code=200):
-        response = Mock(status_code=status_code)
-        response.json.return_value = payload
-        return response
-
-    def valid_graph_responses(self, **profile_overrides):
-        profile = {
-            "id": "facebook-user-123",
-            "email": "facebook-user@example.com",
-            "name": "Facebook User",
-            "first_name": "Facebook",
-            "last_name": "User",
-        }
-        profile.update(profile_overrides)
-
-        return [
-            self.graph_response(
-                {
-                    "data": {
-                        "is_valid": True,
-                        "app_id": settings.FACEBOOK_OAUTH_APP_ID,
-                        "user_id": "facebook-user-123",
-                    }
-                }
-            ),
-            self.graph_response(profile),
-        ]
-
-    @patch("apps.accounts.serializers.http_requests.get")
-    def test_facebook_sign_in_creates_verified_user_and_session(self, graph_get):
-        graph_get.side_effect = self.valid_graph_responses()
-
-        response = self.client.post(
-            self.facebook_url,
-            {"access_token": "valid-facebook-token", "keep_signed_in": True},
-            format="json",
+    def setUp(self):
+        self.user = User.objects.create_user(
+            phone="+256702000101",
+            email="devices@example.com",
+            full_name="Device Owner",
+            password="strong-device-password",
         )
 
-        self.assertEqual(response.status_code, status.HTTP_200_OK)
-        user = User.objects.get(email="facebook-user@example.com")
-        refresh = RefreshToken(response.data["tokens"]["refresh"])
-
-        self.assertEqual(user.facebook_sub, "facebook-user-123")
-        self.assertTrue(user.is_verified)
-        self.assertFalse(user.has_usable_password())
-        self.assertTrue(refresh["keep_signed_in"])
-        self.assertEqual(graph_get.call_count, 2)
-        self.assertTrue(
-            graph_get.call_args_list[0].args[0].endswith("/debug_token")
-        )
-        self.assertTrue(graph_get.call_args_list[1].args[0].endswith("/me"))
-
-    @patch("apps.accounts.serializers.http_requests.get")
-    def test_facebook_sign_in_links_existing_email_account(self, graph_get):
-        user = User.objects.create_user(
-            email="facebook-user@example.com",
-            full_name="Existing User",
-            password="existing-password",
-        )
-        graph_get.side_effect = self.valid_graph_responses()
-
-        response = self.client.post(
-            self.facebook_url,
-            {"access_token": "valid-facebook-token"},
-            format="json",
-        )
-
-        self.assertEqual(response.status_code, status.HTTP_200_OK)
-        user.refresh_from_db()
-        self.assertEqual(user.facebook_sub, "facebook-user-123")
-        self.assertTrue(user.is_verified)
-        self.assertTrue(user.has_usable_password())
-
-    @patch("apps.accounts.serializers.http_requests.get")
-    def test_facebook_sign_in_rejects_token_for_another_app(self, graph_get):
-        graph_get.return_value = self.graph_response(
+    def login(self, device_id, device_name):
+        return self.client.post(
+            self.login_url,
             {
-                "data": {
-                    "is_valid": True,
-                    "app_id": "another-facebook-app",
-                    "user_id": "facebook-user-123",
-                }
-            }
+                "identifier": self.user.phone,
+                "password": "strong-device-password",
+                "keep_signed_in": True,
+                "device": {
+                    "id": device_id,
+                    "device_name": device_name,
+                    "device_model": "Test Model",
+                    "platform": "android",
+                    "os_name": "Android",
+                    "os_version": "16",
+                    "app_version": "1.0.10",
+                },
+            },
+            format="json",
         )
 
+    def test_login_tracks_device_and_marks_it_current(self):
+        response = self.login("device-one", "Nsamba's phone")
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        refresh = RefreshToken(response.data["tokens"]["refresh"])
+        session = UserSession.objects.get(user=self.user)
+        self.assertEqual(str(refresh["session_id"]), str(session.id))
+        self.assertEqual(session.device_id, "device-one")
+
+        self.client.credentials(
+            HTTP_AUTHORIZATION=f'Bearer {response.data["tokens"]["access"]}',
+            HTTP_X_QOT_DEVICE_ID="device-one",
+        )
+        devices = self.client.get("/api/v1/auth/sessions/")
+        self.assertEqual(devices.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(devices.data), 1)
+        self.assertTrue(devices.data[0]["is_current"])
+
+    def test_remotely_signed_out_device_cannot_use_its_access_token(self):
+        first = self.login("device-one", "Current phone")
+        second = self.login("device-two", "Old phone")
+        second_refresh = RefreshToken(second.data["tokens"]["refresh"])
+        second_session = UserSession.objects.get(id=second_refresh["session_id"])
+
+        self.client.credentials(
+            HTTP_AUTHORIZATION=f'Bearer {first.data["tokens"]["access"]}',
+            HTTP_X_QOT_DEVICE_ID="device-one",
+        )
+        revoked = self.client.delete(f"/api/v1/auth/sessions/{second_session.id}/")
+        self.assertEqual(revoked.status_code, status.HTTP_204_NO_CONTENT)
+
+        old_device = APIClient()
+        old_device.credentials(
+            HTTP_AUTHORIZATION=f'Bearer {second.data["tokens"]["access"]}',
+            HTTP_X_QOT_DEVICE_ID="device-two",
+        )
+        rejected = old_device.get("/api/v1/auth/me/")
+        self.assertEqual(rejected.status_code, status.HTTP_401_UNAUTHORIZED)
+
+    def test_refresh_rotation_keeps_device_session_connected(self):
+        login = self.login("device-one", "Current phone")
+        original = RefreshToken(login.data["tokens"]["refresh"])
+
+        refreshed = self.client.post(
+            "/api/v1/auth/token/refresh/",
+            {"refresh": str(original)},
+            format="json",
+        )
+
+        self.assertEqual(refreshed.status_code, status.HTTP_200_OK)
+        rotated = RefreshToken(refreshed.data["refresh"])
+        session = UserSession.objects.get(id=rotated["session_id"])
+        self.assertEqual(session.refresh_jti, str(rotated["jti"]))
+
+    def test_legacy_refresh_is_upgraded_to_a_tracked_device(self):
+        legacy = RefreshToken.for_user(self.user)
+        legacy["keep_signed_in"] = True
+        legacy.set_exp(lifetime=settings.KEEP_SIGNED_IN_LIFETIME)
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {legacy.access_token}")
+
         response = self.client.post(
-            self.facebook_url,
-            {"access_token": "wrong-app-token"},
+            "/api/v1/auth/sessions/register-current/",
+            {
+                "refresh": str(legacy),
+                "device": {
+                    "id": "legacy-device",
+                    "device_name": "Existing QOT app",
+                    "platform": "android",
+                },
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        upgraded = RefreshToken(response.data["tokens"]["refresh"])
+        self.assertTrue(UserSession.objects.filter(id=upgraded["session_id"]).exists())
+
+
+class AlternativePhoneTests(APITestCase):
+    def setUp(self):
+        self.user = User.objects.create_user(
+            phone="+256702000201",
+            full_name="Alternative Phone",
+            password="strong-alternative-password",
+        )
+        self.user.phone_verified_at = timezone.now()
+        self.user.save(update_fields=["phone_verified_at", "updated_at"])
+        self.client.force_authenticate(self.user)
+
+    def test_alternative_phone_is_canonical_and_does_not_change_verification(self):
+        verified_at = self.user.phone_verified_at
+        response = self.client.patch(
+            "/api/v1/auth/me/",
+            {"alternative_phone": "0772 000 202"},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.user.refresh_from_db()
+        self.assertEqual(self.user.profile.alternative_phone, "+256772000202")
+        self.assertEqual(self.user.phone_verified_at, verified_at)
+
+    def test_alternative_phone_cannot_duplicate_primary_phone(self):
+        response = self.client.patch(
+            "/api/v1/auth/me/",
+            {"alternative_phone": "0702000201"},
             format="json",
         )
 
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
-        self.assertFalse(User.objects.exists())
-        graph_get.assert_called_once()
 
-    @patch("apps.accounts.serializers.http_requests.get")
-    def test_facebook_sign_in_requires_email_permission(self, graph_get):
-        graph_get.side_effect = self.valid_graph_responses(email=None)
 
-        response = self.client.post(
-            self.facebook_url,
-            {"access_token": "facebook-token-without-email"},
-            format="json",
-        )
-
-        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
-        self.assertFalse(User.objects.exists())
+class RemovedSocialLoginTests(APITestCase):
+    def test_removed_social_provider_endpoint_is_not_available(self):
+        response = self.client.post("/api/v1/auth/facebook/", {}, format="json")
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)

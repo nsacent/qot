@@ -1,12 +1,15 @@
 from smtplib import SMTPException
 
 from rest_framework import generics, permissions, status
+from rest_framework.exceptions import AuthenticationFailed
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from django.contrib.auth.tokens import default_token_generator
+from django.core.exceptions import ValidationError
 from django.core.mail import send_mail
 from django.conf import settings
+from django.core.validators import validate_ipv46_address
 from django.utils import timezone
 from django.utils.encoding import force_bytes
 from django.utils.http import urlsafe_base64_encode
@@ -14,8 +17,9 @@ from django.utils.http import urlsafe_base64_encode
 from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework_simplejwt.exceptions import TokenError
 from rest_framework_simplejwt.token_blacklist.models import BlacklistedToken, OutstandingToken
+from rest_framework_simplejwt.utils import datetime_from_epoch
 
-from .models import User
+from .models import User, UserSession
 from apps.common.emailing import build_branded_email_html
 from apps.notifications.models import PushDevice
 from .serializers import (
@@ -24,8 +28,8 @@ from .serializers import (
     PhoneOTPRequestSerializer,
     PhoneOTPConfirmSerializer,
     GoogleLoginSerializer,
-    FacebookLoginSerializer,
     UserSerializer,
+    UserSessionSerializer,
     ProfileUpdateSerializer,
     PasswordResetRequestSerializer,
     PasswordResetConfirmSerializer,
@@ -45,15 +49,99 @@ from .services import (
 from .sms import SMSConfigurationError, SMSDeliveryError
 
 
-def get_tokens_for_user(user, keep_signed_in=True):
+def _client_ip(request):
+    forwarded = str(request.META.get("HTTP_X_FORWARDED_FOR") or "").split(",")[0].strip()
+    address = forwarded or str(request.META.get("REMOTE_ADDR") or "").strip()
+    if not address:
+        return None
+    try:
+        validate_ipv46_address(address)
+    except ValidationError:
+        return None
+    return address
+
+
+def _device_metadata(request):
+    raw = request.data.get("device") if hasattr(request.data, "get") else None
+    device = raw if isinstance(raw, dict) else {}
+
+    def clean(key, maximum):
+        return str(device.get(key) or "").strip()[:maximum]
+
+    platform = clean("platform", 20).lower()
+    if platform not in dict(UserSession.PLATFORM_CHOICES):
+        platform = str(request.headers.get("X-QOT-Platform") or "unknown").lower()
+    if platform not in dict(UserSession.PLATFORM_CHOICES):
+        platform = UserSession.PLATFORM_UNKNOWN
+
+    return {
+        "device_id": clean("id", 255) or str(request.headers.get("X-QOT-Device-ID") or "")[:255],
+        "device_name": clean("device_name", 255),
+        "device_model": clean("device_model", 255),
+        "platform": platform,
+        "os_name": clean("os_name", 100),
+        "os_version": clean("os_version", 100),
+        "app_version": clean("app_version", 50),
+        "ip_address": _client_ip(request),
+        "user_agent": str(request.META.get("HTTP_USER_AGENT") or "")[:1000],
+    }
+
+
+def _blacklist_session_refresh(session):
+    outstanding = OutstandingToken.objects.filter(jti=session.refresh_jti).first()
+    if outstanding:
+        BlacklistedToken.objects.get_or_create(token=outstanding)
+
+
+def _revoke_session(session):
+    _blacklist_session_refresh(session)
+    now = timezone.now()
+    session.is_active = False
+    session.revoked_at = now
+    session.save(update_fields=["is_active", "revoked_at"])
+    if session.device_id:
+        PushDevice.objects.filter(
+            user=session.user,
+            device_id=session.device_id,
+            is_active=True,
+        ).update(is_active=False)
+
+
+def get_tokens_for_user(user, keep_signed_in=True, request=None):
     refresh = RefreshToken.for_user(user)
 
     if keep_signed_in:
         refresh["keep_signed_in"] = True
         refresh.set_exp(lifetime=settings.KEEP_SIGNED_IN_LIFETIME)
 
+    if request is not None:
+        metadata = _device_metadata(request)
+        device_id = metadata["device_id"]
+        if device_id:
+            previous_sessions = UserSession.objects.filter(
+                user=user,
+                device_id=device_id,
+                is_active=True,
+            )
+            for previous in previous_sessions:
+                _revoke_session(previous)
+
+        session = UserSession.objects.create(
+            user=user,
+            refresh_jti=str(refresh["jti"]),
+            expires_at=datetime_from_epoch(refresh["exp"]),
+            **metadata,
+        )
+        refresh["session_id"] = str(session.id)
+
+    final_refresh = str(refresh)
+    OutstandingToken.objects.filter(jti=refresh["jti"]).update(
+        token=final_refresh,
+        expires_at=datetime_from_epoch(refresh["exp"]),
+    )
+
     return {
-        "refresh": str(refresh),
+        "refresh": final_refresh,
         "access": str(refresh.access_token),
     }
 
@@ -67,7 +155,7 @@ class RegisterAPIView(generics.CreateAPIView):
         serializer.is_valid(raise_exception=True)
 
         user = serializer.save()
-        tokens = get_tokens_for_user(user, keep_signed_in=True)
+        tokens = get_tokens_for_user(user, keep_signed_in=True, request=request)
 
         return Response(
             {
@@ -90,6 +178,7 @@ class LoginAPIView(APIView):
         tokens = get_tokens_for_user(
             user,
             keep_signed_in=serializer.validated_data["keep_signed_in"],
+            request=request,
         )
 
         return Response(
@@ -177,7 +266,7 @@ class ConfirmPhoneLoginCodeAPIView(APIView):
             user.frozen_at = None
             user.save(update_fields=["is_active", "is_frozen", "frozen_at", "updated_at"])
 
-        tokens = get_tokens_for_user(user, keep_signed_in=True)
+        tokens = get_tokens_for_user(user, keep_signed_in=True, request=request)
         return Response(
             {
                 "message": (
@@ -294,109 +383,12 @@ class GoogleLoginAPIView(APIView):
         tokens = get_tokens_for_user(
             user,
             keep_signed_in=serializer.validated_data["keep_signed_in"],
+            request=request,
         )
 
         return Response(
             {
                 "message": "Google sign-in successful.",
-                "user": UserSerializer(user).data,
-                "tokens": tokens,
-            },
-            status=status.HTTP_200_OK,
-        )
-
-
-class FacebookLoginAPIView(APIView):
-    permission_classes = [permissions.AllowAny]
-
-    def post(self, request):
-        if request.content_type != "application/json":
-            return Response(
-                {"detail": "Facebook sign-in requires a JSON request."},
-                status=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
-            )
-
-        serializer = FacebookLoginSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-
-        identity = serializer.validated_data["identity"]
-        facebook_sub = str(identity["sub"])
-        email = str(identity["email"]).strip().lower()
-        full_name = str(identity.get("name") or "").strip()
-
-        if not full_name:
-            full_name = " ".join(
-                value
-                for value in (
-                    str(identity.get("given_name") or "").strip(),
-                    str(identity.get("family_name") or "").strip(),
-                )
-                if value
-            ) or email.split("@")[0]
-
-        user = User.objects.filter(facebook_sub=facebook_sub).first()
-        found_by_email = False
-
-        if user is None:
-            user = User.objects.filter(email__iexact=email).first()
-            found_by_email = user is not None
-
-        if user and not user.is_active:
-            return Response(
-                {"detail": "This account is inactive."},
-                status=status.HTTP_403_FORBIDDEN,
-            )
-
-        if user and user.is_banned:
-            return Response(
-                {"detail": "This account has been banned."},
-                status=status.HTTP_403_FORBIDDEN,
-            )
-
-        if found_by_email:
-            if user.facebook_sub and user.facebook_sub != facebook_sub:
-                return Response(
-                    {"detail": "This email is linked to another Facebook account."},
-                    status=status.HTTP_400_BAD_REQUEST,
-                )
-
-            user.facebook_sub = facebook_sub
-            user.is_verified = True
-            user.email_verified_at = timezone.now()
-            user.save(update_fields=[
-                "facebook_sub",
-                "is_verified",
-                "email_verified_at",
-                "updated_at",
-            ])
-
-        if user is None:
-            user = User.objects.create_user(
-                email=email,
-                full_name=full_name,
-                password=None,
-                facebook_sub=facebook_sub,
-                is_verified=True,
-                email_verified_at=timezone.now(),
-            )
-
-        if user.email and user.email.lower() == email and not user.email_verified:
-            user.email_verified_at = timezone.now()
-            user.is_verified = True
-            user.save(update_fields=[
-                "email_verified_at",
-                "is_verified",
-                "updated_at",
-            ])
-
-        tokens = get_tokens_for_user(
-            user,
-            keep_signed_in=serializer.validated_data["keep_signed_in"],
-        )
-
-        return Response(
-            {
-                "message": "Facebook sign-in successful.",
                 "user": UserSerializer(user).data,
                 "tokens": tokens,
             },
@@ -420,6 +412,11 @@ class LogoutAPIView(APIView):
 
         try:
             token = RefreshToken(refresh_token)
+            UserSession.objects.filter(
+                user=request.user,
+                refresh_jti=str(token.get("jti") or ""),
+                is_active=True,
+            ).update(is_active=False, revoked_at=timezone.now())
             token.blacklist()
 
             return Response(
@@ -436,6 +433,127 @@ class LogoutAPIView(APIView):
                 },
                 status=status.HTTP_400_BAD_REQUEST,
             )
+
+
+class UserSessionListAPIView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        now = timezone.now()
+        UserSession.objects.filter(
+            user=request.user,
+            is_active=True,
+            expires_at__lte=now,
+        ).update(is_active=False, revoked_at=now)
+        sessions = UserSession.objects.filter(
+            user=request.user,
+            is_active=True,
+            expires_at__gt=now,
+        )
+        serializer = UserSessionSerializer(
+            sessions,
+            many=True,
+            context={
+                "current_session_id": request.auth.get("session_id") if request.auth else None,
+                "current_device_id": request.headers.get("X-QOT-Device-ID", ""),
+            },
+        )
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+
+class RegisterCurrentSessionAPIView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        refresh_value = str(request.data.get("refresh") or "").strip()
+        if not refresh_value:
+            return Response(
+                {"refresh": ["Refresh token is required."]},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            old_refresh = RefreshToken(refresh_value)
+        except TokenError:
+            return Response(
+                {"detail": "Your session has expired. Please sign in again."},
+                status=status.HTTP_401_UNAUTHORIZED,
+            )
+
+        if str(old_refresh.get("user_id")) != str(request.user.pk):
+            raise AuthenticationFailed("This session does not belong to your account.")
+
+        session_id = old_refresh.get("session_id")
+        if session_id and UserSession.objects.filter(
+            id=session_id,
+            user=request.user,
+            is_active=True,
+        ).exists():
+            return Response(
+                {"tokens": None, "message": "This device is already tracked."},
+                status=status.HTTP_200_OK,
+            )
+
+        keep_signed_in = bool(old_refresh.get("keep_signed_in", True))
+        old_refresh.blacklist()
+        tokens = get_tokens_for_user(
+            request.user,
+            keep_signed_in=keep_signed_in,
+            request=request,
+        )
+        return Response(
+            {"tokens": tokens, "message": "This device is now tracked."},
+            status=status.HTTP_200_OK,
+        )
+
+
+class RevokeUserSessionAPIView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def delete(self, request, session_id):
+        session = UserSession.objects.filter(
+            id=session_id,
+            user=request.user,
+            is_active=True,
+        ).first()
+        if session is None:
+            return Response(
+                {"detail": "Signed-in device not found."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        current_id = request.auth.get("session_id") if request.auth else None
+        if current_id and str(current_id) == str(session.id):
+            return Response(
+                {"detail": "Use Sign out to sign out this device."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        _revoke_session(session)
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class RevokeOtherUserSessionsAPIView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        current_id = request.auth.get("session_id") if request.auth else None
+        current_device_id = request.headers.get("X-QOT-Device-ID", "")
+        sessions = UserSession.objects.filter(user=request.user, is_active=True)
+        if current_id:
+            sessions = sessions.exclude(id=current_id)
+        elif current_device_id:
+            sessions = sessions.exclude(device_id=current_device_id)
+
+        revoked = 0
+        for session in sessions:
+            _revoke_session(session)
+            revoked += 1
+
+        return Response(
+            {"message": "Other devices signed out.", "revoked": revoked},
+            status=status.HTTP_200_OK,
+        )
 
 class PasswordResetRequestAPIView(APIView):
     permission_classes = [permissions.AllowAny]
@@ -541,6 +659,10 @@ class FreezeAccountAPIView(APIView):
         PushDevice.objects.filter(user=user, is_active=True).update(is_active=False)
         for outstanding_token in OutstandingToken.objects.filter(user=user):
             BlacklistedToken.objects.get_or_create(token=outstanding_token)
+        UserSession.objects.filter(user=user, is_active=True).update(
+            is_active=False,
+            revoked_at=timezone.now(),
+        )
 
         return Response(
             {

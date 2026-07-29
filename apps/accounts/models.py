@@ -1,3 +1,5 @@
+import uuid
+
 from django.contrib.auth.models import AbstractBaseUser, PermissionsMixin
 from django.core.exceptions import ValidationError
 from django.db import models
@@ -55,14 +57,6 @@ class User(AbstractBaseUser, PermissionsMixin):
         blank=True,
         editable=False,
     )
-    facebook_sub = models.CharField(
-        max_length=255,
-        unique=True,
-        null=True,
-        blank=True,
-        editable=False,
-    )
-
     banned_reason = models.TextField(null=True, blank=True)
 
     date_joined = models.DateTimeField(default=timezone.now)
@@ -142,6 +136,7 @@ class UserProfile(models.Model):
     )
     bio = models.TextField(null=True, blank=True)
     business_name = models.CharField(max_length=150, null=True, blank=True)
+    alternative_phone = models.CharField(max_length=20, null=True, blank=True)
     notification_preferences = models.JSONField(
         default=default_notification_preferences,
         blank=True,
@@ -156,6 +151,56 @@ class UserProfile(models.Model):
 
     def __str__(self):
         return f"Profile: {self.user}"
+
+
+class UserSession(models.Model):
+    PLATFORM_ANDROID = "android"
+    PLATFORM_IOS = "ios"
+    PLATFORM_WEB = "web"
+    PLATFORM_UNKNOWN = "unknown"
+
+    PLATFORM_CHOICES = [
+        (PLATFORM_ANDROID, "Android"),
+        (PLATFORM_IOS, "iOS"),
+        (PLATFORM_WEB, "Web"),
+        (PLATFORM_UNKNOWN, "Unknown"),
+    ]
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    user = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name="login_sessions",
+    )
+    refresh_jti = models.CharField(max_length=255, unique=True)
+    device_id = models.CharField(max_length=255, blank=True, db_index=True)
+    device_name = models.CharField(max_length=255, blank=True)
+    device_model = models.CharField(max_length=255, blank=True)
+    platform = models.CharField(
+        max_length=20,
+        choices=PLATFORM_CHOICES,
+        default=PLATFORM_UNKNOWN,
+    )
+    os_name = models.CharField(max_length=100, blank=True)
+    os_version = models.CharField(max_length=100, blank=True)
+    app_version = models.CharField(max_length=50, blank=True)
+    ip_address = models.GenericIPAddressField(null=True, blank=True)
+    user_agent = models.TextField(blank=True)
+    is_active = models.BooleanField(default=True, db_index=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    last_seen_at = models.DateTimeField(default=timezone.now, db_index=True)
+    expires_at = models.DateTimeField(db_index=True)
+    revoked_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ["-last_seen_at", "-created_at"]
+        indexes = [
+            models.Index(fields=["user", "is_active"]),
+            models.Index(fields=["user", "device_id"]),
+        ]
+
+    def __str__(self):
+        return f"{self.user} — {self.device_name or self.device_model or self.platform}"
 
 
 class UserFollow(models.Model):

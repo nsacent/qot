@@ -10,6 +10,11 @@ class PublicSellerSerializer(serializers.ModelSerializer):
     cover_photo = serializers.SerializerMethodField()
     bio = serializers.CharField(source="profile.bio", read_only=True)
     business_name = serializers.CharField(source="profile.business_name", read_only=True)
+    alternative_phone = serializers.CharField(
+        source="profile.alternative_phone",
+        read_only=True,
+        allow_null=True,
+    )
     trust_score = serializers.IntegerField(source="profile.trust_score", read_only=True)
     total_active_listings = serializers.SerializerMethodField()
     average_rating = serializers.SerializerMethodField()
@@ -34,6 +39,7 @@ class PublicSellerSerializer(serializers.ModelSerializer):
             "id",
             "full_name",
             "phone",
+            "alternative_phone",
             "is_verified",
             "avatar",
             "cover_photo",
