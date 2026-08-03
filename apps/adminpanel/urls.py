@@ -31,6 +31,7 @@ from .views import (
     AdminBackupDownloadAPIView,
     AdminBackupRestoreAPIView,
     AdminActivityLogListAPIView,
+    AdminPushBroadcastListCreateAPIView,
     AdminListingImageDetailAPIView,
     AdminListingImageReorderAPIView,
 )
@@ -42,6 +43,7 @@ app_name = "adminpanel"
 urlpatterns = [
     path("dashboard/", AdminDashboardAPIView.as_view(), name="dashboard"),
     path("activity/", AdminActivityLogListAPIView.as_view(), name="activity_log_list"),
+    path("push-notifications/", AdminPushBroadcastListCreateAPIView.as_view(), name="push_notification_list_create"),
     path("backups/", AdminBackupListCreateAPIView.as_view(), name="backup_list_create"),
     path("backups/<str:filename>/download/", AdminBackupDownloadAPIView.as_view(), name="backup_download"),
     path("backups/<str:filename>/restore/", AdminBackupRestoreAPIView.as_view(), name="backup_restore"),

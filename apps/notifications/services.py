@@ -3,7 +3,7 @@ from channels.layers import get_channel_layer
 from django.conf import settings
 from django.core.mail import EmailMultiAlternatives
 from django.db import transaction
-from django.db.models import Q
+from django.db.models import Count, Q
 import requests
 
 from apps.common.emailing import build_branded_email_html
@@ -62,6 +62,9 @@ def _send_branded_email(
 
 
 def _notification_action(notification):
+    if notification.action_url.startswith("/"):
+        return (_frontend_url(notification.action_url), "Open in QOT")
+
     if notification.notification_type == Notification.TYPE_LISTING_DELETED:
         return (
             _frontend_url("/account/notifications"),
@@ -81,6 +84,9 @@ def _notification_action(notification):
 
 
 def _notification_app_url(notification):
+    if notification.action_url.startswith("qot://"):
+        return notification.action_url
+
     if notification.notification_type == Notification.TYPE_LISTING_DELETED:
         return "qot://notifications"
 
@@ -162,6 +168,97 @@ def deliver_notification_push(notification_id):
             PushDevice.objects.filter(id__in=invalid_device_ids).update(is_active=False)
 
     return delivered
+
+
+def deliver_notifications_push(notifications, platform=None):
+    """Send many user notifications through Expo in batches of 100."""
+    notification_list = list(notifications)
+    if not notification_list:
+        return {"targeted": 0, "accepted": 0, "rejected": 0}
+
+    notification_by_user = {
+        notification.user_id: notification
+        for notification in notification_list
+    }
+    device_queryset = PushDevice.objects.filter(
+        user_id__in=notification_by_user,
+        is_active=True,
+    ).only("id", "user_id", "expo_push_token")
+    if platform in {PushDevice.PLATFORM_ANDROID, PushDevice.PLATFORM_IOS}:
+        device_queryset = device_queryset.filter(platform=platform)
+    devices = list(device_queryset)
+
+    unread_counts = {
+        row["user_id"]: row["total"]
+        for row in (
+            Notification.objects
+            .filter(user_id__in=notification_by_user, is_read=False)
+            .values("user_id")
+            .annotate(total=Count("id"))
+        )
+    }
+
+    targeted = len(devices)
+    accepted = 0
+    rejected = 0
+    for offset in range(0, targeted, 100):
+        device_batch = devices[offset:offset + 100]
+        messages = []
+        for device in device_batch:
+            notification = notification_by_user[device.user_id]
+            messages.append(
+                {
+                    "to": device.expo_push_token,
+                    "title": notification.title,
+                    "body": notification.message,
+                    "sound": "default",
+                    "priority": "high",
+                    "channelId": "qot-updates",
+                    "badge": unread_counts.get(device.user_id, 1),
+                    "data": {
+                        "url": _notification_app_url(notification),
+                        "notification_id": notification.id,
+                        "notification_type": notification.notification_type,
+                    },
+                }
+            )
+
+        try:
+            response = requests.post(
+                EXPO_PUSH_URL,
+                json=messages,
+                headers={
+                    "Accept": "application/json",
+                    "Content-Type": "application/json",
+                },
+                timeout=12,
+            )
+            response.raise_for_status()
+            tickets = response.json().get("data", [])
+        except (requests.RequestException, ValueError, AttributeError):
+            rejected += len(device_batch)
+            continue
+
+        invalid_device_ids = []
+        for device, ticket in zip(device_batch, tickets):
+            if ticket.get("status") == "ok":
+                accepted += 1
+            else:
+                rejected += 1
+                if ticket.get("details", {}).get("error") == "DeviceNotRegistered":
+                    invalid_device_ids.append(device.id)
+
+        if len(tickets) < len(device_batch):
+            rejected += len(device_batch) - len(tickets)
+
+        if invalid_device_ids:
+            PushDevice.objects.filter(id__in=invalid_device_ids).update(is_active=False)
+
+    return {
+        "targeted": targeted,
+        "accepted": accepted,
+        "rejected": rejected,
+    }
 
 
 def deliver_notification_email(notification_id):
@@ -269,6 +366,7 @@ def broadcast_notification(notification):
         "message": notification.message,
         "listing": notification.listing_id,
         "chat_thread": notification.chat_thread_id,
+        "action_url": notification.action_url,
         "is_read": notification.is_read,
         "created_at": notification.created_at.isoformat(),
     }
@@ -290,7 +388,10 @@ def create_notification(
     message,
     listing=None,
     chat_thread=None,
+    action_url="",
     preference_key=None,
+    deliver_email=True,
+    deliver_push=True,
 ):
     if preference_key:
         profile = getattr(user, "profile", None)
@@ -306,32 +407,36 @@ def create_notification(
         message=message,
         listing=listing,
         chat_thread=chat_thread,
+        action_url=action_url,
     )
 
     broadcast_notification(notification)
-    transaction.on_commit(
-        lambda notification_id=notification.pk: deliver_notification_email(
-            notification_id
+    if deliver_email:
+        transaction.on_commit(
+            lambda notification_id=notification.pk: deliver_notification_email(
+                notification_id
+            )
         )
-    )
-    transaction.on_commit(
-        lambda notification_id=notification.pk: deliver_notification_push(
-            notification_id
+    if deliver_push:
+        transaction.on_commit(
+            lambda notification_id=notification.pk: deliver_notification_push(
+                notification_id
+            )
         )
-    )
 
     return notification
 
 
 def create_message_notification(thread, message):
     sender = message.sender
+    message_type = getattr(message, "message_type", "")
 
     if sender == thread.buyer:
         recipient = thread.seller
     else:
         recipient = thread.buyer
 
-    if getattr(message, "message_type", "") == "offer" and message.offer_amount is not None:
+    if message_type == "offer" and message.offer_amount is not None:
         title = "New price offer"
         notification_message = (
             f"{sender.full_name} offered UGX {message.offer_amount:,.0f} "
@@ -348,7 +453,11 @@ def create_message_notification(thread, message):
 
     return create_notification(
         user=recipient,
-        notification_type=Notification.TYPE_MESSAGE,
+        notification_type=(
+            Notification.TYPE_OFFER
+            if message_type == "offer"
+            else Notification.TYPE_MESSAGE
+        ),
         title=title,
         message=notification_message,
         listing=thread.listing,
@@ -384,7 +493,7 @@ def create_offer_status_notification(thread, offer):
 
     return create_notification(
         user=recipient,
-        notification_type=Notification.TYPE_MESSAGE,
+        notification_type=Notification.TYPE_OFFER,
         title=title,
         message=message,
         listing=thread.listing,
@@ -472,6 +581,54 @@ def create_follow_notification(follow):
         title="You have a new follower",
         message=f"{follow.follower.full_name} started following your QOT profile.",
         preference_key="followers",
+    )
+
+
+def create_review_notification(review):
+    listing = review.listing
+    subject = f" for '{listing.title}'" if listing else ""
+    return create_notification(
+        user=review.seller,
+        notification_type=Notification.TYPE_REVIEW,
+        title="You received a new review",
+        message=(
+            f"{review.reviewer.full_name} left you a {review.rating}-star review"
+            f"{subject}."
+        ),
+        listing=listing,
+        preference_key="reviews",
+    )
+
+
+def create_listing_report_resolved_notification(report):
+    note = " ".join(str(report.resolution_note or "").split())
+    detail = f" Note: {note}" if note else ""
+    return create_notification(
+        user=report.reporter,
+        notification_type=Notification.TYPE_REPORT,
+        title="Your ad report was reviewed",
+        message=(
+            f"QOT has reviewed your report about '{report.listing.title}'.{detail}"
+        ),
+        listing=report.listing,
+        preference_key="reports",
+    )
+
+
+def create_chat_report_resolved_notification(report, note=""):
+    clean_note = " ".join(str(note or "").split())
+    detail = f" Note: {clean_note}" if clean_note else ""
+    return create_notification(
+        user=report.reporter,
+        notification_type=Notification.TYPE_REPORT,
+        title="Your chat report was reviewed",
+        message=(
+            "QOT has reviewed the report you submitted about a conversation."
+            f"{detail}"
+        ),
+        listing=report.thread.listing,
+        chat_thread=report.thread,
+        preference_key="reports",
     )
 
 

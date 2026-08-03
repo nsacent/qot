@@ -10,6 +10,10 @@ class Notification(models.Model):
     TYPE_LISTING_EXPIRED = "listing_expired"
     TYPE_FAVORITE = "favorite"
     TYPE_FOLLOW = "follow"
+    TYPE_REVIEW = "review"
+    TYPE_OFFER = "offer"
+    TYPE_REPORT = "report"
+    TYPE_ANNOUNCEMENT = "announcement"
     TYPE_SYSTEM = "system"
 
     TYPE_CHOICES = [
@@ -20,6 +24,10 @@ class Notification(models.Model):
         (TYPE_LISTING_EXPIRED, "Ad Expired"),
         (TYPE_FAVORITE, "Ad Saved"),
         (TYPE_FOLLOW, "New Follower"),
+        (TYPE_REVIEW, "New Review"),
+        (TYPE_OFFER, "Offer Update"),
+        (TYPE_REPORT, "Report Update"),
+        (TYPE_ANNOUNCEMENT, "QOT Announcement"),
         (TYPE_SYSTEM, "System"),
     ]
 
@@ -53,6 +61,8 @@ class Notification(models.Model):
         blank=True,
         related_name="notifications",
     )
+
+    action_url = models.CharField(max_length=500, blank=True)
 
     is_read = models.BooleanField(default=False, db_index=True)
 

@@ -19,7 +19,7 @@ from apps.reviews.models import SellerReview
 from apps.payments.models import Payment, PromotionPackage
 
 from apps.chats.models import ChatReport, ChatBlock
-from .models import AdminActivityLog
+from .models import AdminActivityLog, AdminPushBroadcast
 
 
 class AdminActivityLogSerializer(serializers.ModelSerializer):
@@ -51,6 +51,89 @@ class AdminActivityLogSerializer(serializers.ModelSerializer):
 
     def get_successful(self, obj):
         return obj.status_code < 400
+
+
+class AdminPushBroadcastSerializer(serializers.ModelSerializer):
+    created_by_name = serializers.CharField(
+        source="created_by.full_name",
+        read_only=True,
+    )
+    audience_label = serializers.CharField(
+        source="get_audience_display",
+        read_only=True,
+    )
+    delivery_type_label = serializers.CharField(
+        source="get_delivery_type_display",
+        read_only=True,
+    )
+
+    class Meta:
+        model = AdminPushBroadcast
+        fields = [
+            "id",
+            "created_by",
+            "created_by_name",
+            "title",
+            "message",
+            "audience",
+            "audience_label",
+            "delivery_type",
+            "delivery_type_label",
+            "action_url",
+            "selected_user_ids",
+            "matched_users",
+            "targeted_devices",
+            "accepted_devices",
+            "rejected_devices",
+            "created_at",
+        ]
+        read_only_fields = fields
+
+
+class AdminPushBroadcastCreateSerializer(serializers.Serializer):
+    title = serializers.CharField(max_length=150)
+    message = serializers.CharField(max_length=500)
+    audience = serializers.ChoiceField(
+        choices=AdminPushBroadcast.AUDIENCE_CHOICES,
+    )
+    delivery_type = serializers.ChoiceField(
+        choices=AdminPushBroadcast.DELIVERY_CHOICES,
+        default=AdminPushBroadcast.DELIVERY_ANNOUNCEMENT,
+    )
+    action_url = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        max_length=500,
+    )
+    user_ids = serializers.ListField(
+        child=serializers.IntegerField(min_value=1),
+        required=False,
+        allow_empty=True,
+        max_length=500,
+    )
+
+    def validate_action_url(self, value):
+        clean_value = str(value or "").strip()
+        if clean_value and not (
+            clean_value.startswith("qot://")
+            or clean_value.startswith("/")
+        ):
+            raise serializers.ValidationError(
+                "Use a QOT app link beginning qot:// or a QOT web path beginning /."
+            )
+        return clean_value
+
+    def validate(self, attrs):
+        user_ids = list(dict.fromkeys(attrs.get("user_ids", [])))
+        attrs["user_ids"] = user_ids
+        if (
+            attrs.get("audience") == AdminPushBroadcast.AUDIENCE_SELECTED
+            and not user_ids
+        ):
+            raise serializers.ValidationError(
+                {"user_ids": "Select at least one user."}
+            )
+        return attrs
 
 class AdminUserSerializer(serializers.ModelSerializer):
     avatar_url = serializers.SerializerMethodField()

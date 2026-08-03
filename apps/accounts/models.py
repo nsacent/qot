@@ -17,6 +17,7 @@ def default_notification_preferences():
         "listing_rejections": True,
         "favorites": True,
         "followers": True,
+        "reviews": True,
         "reports": True,
         "renewals": True,
         "marketing": False,

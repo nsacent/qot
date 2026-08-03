@@ -6,6 +6,7 @@ from apps.listings.models import Listing
 from .models import SellerReview
 
 from apps.accounts.trust import calculate_user_trust_score
+from apps.notifications.services import create_review_notification
 
 
 class SellerReviewSerializer(serializers.ModelSerializer):
@@ -104,5 +105,6 @@ class SellerReviewCreateSerializer(serializers.ModelSerializer):
         )
 
         calculate_user_trust_score(review.seller)
+        create_review_notification(review)
 
         return review

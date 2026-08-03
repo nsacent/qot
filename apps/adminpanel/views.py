@@ -23,7 +23,7 @@ from datetime import timedelta
 from django.utils import timezone
 
 from .permissions import IsAdministrator, IsAdminOrModerator
-from .models import AdminActivityLog
+from .models import AdminActivityLog, AdminPushBroadcast
 from .backups import (
     BackupBusyError,
     BackupError,
@@ -62,6 +62,8 @@ from .serializers import (
     ResolveChatReportSerializer,
     AdminChatBlockSerializer,
     AdminActivityLogSerializer,
+    AdminPushBroadcastSerializer,
+    AdminPushBroadcastCreateSerializer,
 )
 
 from apps.notifications.services import (
@@ -70,7 +72,11 @@ from apps.notifications.services import (
     create_listing_deleted_notification,
     create_payment_paid_notification,
     create_payment_failed_notification,
+    create_chat_report_resolved_notification,
+    broadcast_notification,
+    deliver_notifications_push,
 )
+from apps.notifications.models import Notification, PushDevice
 
 
 logger = logging.getLogger(__name__)
@@ -185,6 +191,128 @@ class AdminActivityLogListAPIView(generics.ListAPIView):
         serializer = self.get_serializer(queryset, many=True)
         return Response({"results": serializer.data, "summary": summary})
 
+
+class AdminPushBroadcastListCreateAPIView(APIView):
+    permission_classes = [permissions.IsAuthenticated, IsAdministrator]
+
+    def get(self, request):
+        broadcasts = (
+            AdminPushBroadcast.objects
+            .select_related("created_by")
+            .order_by("-created_at", "-id")[:30]
+        )
+        active_devices = PushDevice.objects.filter(is_active=True)
+        return Response(
+            {
+                "summary": {
+                    "active_devices": active_devices.count(),
+                    "android_devices": active_devices.filter(
+                        platform=PushDevice.PLATFORM_ANDROID,
+                    ).count(),
+                    "ios_devices": active_devices.filter(
+                        platform=PushDevice.PLATFORM_IOS,
+                    ).count(),
+                },
+                "results": AdminPushBroadcastSerializer(
+                    broadcasts,
+                    many=True,
+                ).data,
+            },
+            status=status.HTTP_200_OK,
+        )
+
+    def post(self, request):
+        serializer = AdminPushBroadcastCreateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        payload = serializer.validated_data
+        audience = payload["audience"]
+        delivery_type = payload["delivery_type"]
+        selected_user_ids = payload.get("user_ids", [])
+
+        users = (
+            User.objects
+            .filter(is_active=True, is_banned=False)
+            .select_related("profile")
+            .order_by("id")
+        )
+        push_platform = None
+        if audience == AdminPushBroadcast.AUDIENCE_ANDROID:
+            push_platform = PushDevice.PLATFORM_ANDROID
+            users = users.filter(
+                push_devices__is_active=True,
+                push_devices__platform=push_platform,
+            ).distinct()
+        elif audience == AdminPushBroadcast.AUDIENCE_IOS:
+            push_platform = PushDevice.PLATFORM_IOS
+            users = users.filter(
+                push_devices__is_active=True,
+                push_devices__platform=push_platform,
+            ).distinct()
+        elif audience == AdminPushBroadcast.AUDIENCE_SELECTED:
+            users = users.filter(id__in=selected_user_ids)
+
+        user_list = list(users)
+        if delivery_type == AdminPushBroadcast.DELIVERY_MARKETING:
+            user_list = [
+                user
+                for user in user_list
+                if (
+                    getattr(user.profile, "notification_preferences", {}) or {}
+                ).get("marketing", False)
+            ]
+
+        action_url = payload.get("action_url") or "qot://notifications"
+        with transaction.atomic():
+            admin_broadcast = AdminPushBroadcast.objects.create(
+                created_by=request.user,
+                title=payload["title"],
+                message=payload["message"],
+                audience=audience,
+                delivery_type=delivery_type,
+                action_url=action_url,
+                selected_user_ids=selected_user_ids,
+                matched_users=len(user_list),
+            )
+            notifications = Notification.objects.bulk_create(
+                [
+                    Notification(
+                        user=user,
+                        notification_type=Notification.TYPE_ANNOUNCEMENT,
+                        title=admin_broadcast.title,
+                        message=admin_broadcast.message,
+                        action_url=admin_broadcast.action_url,
+                    )
+                    for user in user_list
+                ],
+                batch_size=500,
+            )
+
+        for notification in notifications:
+            try:
+                broadcast_notification(notification)
+            except Exception:
+                logger.exception(
+                    "Unable to broadcast admin push notification %s",
+                    notification.pk,
+                )
+
+        result = deliver_notifications_push(
+            notifications,
+            platform=push_platform,
+        )
+        admin_broadcast.targeted_devices = result["targeted"]
+        admin_broadcast.accepted_devices = result["accepted"]
+        admin_broadcast.rejected_devices = result["rejected"]
+        admin_broadcast.save(update_fields=[
+            "targeted_devices",
+            "accepted_devices",
+            "rejected_devices",
+        ])
+
+        return Response(
+            AdminPushBroadcastSerializer(admin_broadcast).data,
+            status=status.HTTP_201_CREATED,
+        )
 
 class AdminBackupListCreateAPIView(APIView):
     permission_classes = [permissions.IsAuthenticated, IsAdministrator]
@@ -1647,6 +1775,7 @@ class ResolveChatReportAPIView(APIView):
                 "resolved_at",
             ]
         )
+        create_chat_report_resolved_notification(report, note)
 
         return Response(
             {

@@ -35,3 +35,52 @@ class AdminActivityLog(models.Model):
 
     def __str__(self):
         return f"{self.actor_name or 'User'}: {self.description}"
+
+
+class AdminPushBroadcast(models.Model):
+    AUDIENCE_ALL = "all"
+    AUDIENCE_ANDROID = "android"
+    AUDIENCE_IOS = "ios"
+    AUDIENCE_SELECTED = "selected"
+    AUDIENCE_CHOICES = [
+        (AUDIENCE_ALL, "All users"),
+        (AUDIENCE_ANDROID, "Android users"),
+        (AUDIENCE_IOS, "iOS users"),
+        (AUDIENCE_SELECTED, "Selected users"),
+    ]
+
+    DELIVERY_ANNOUNCEMENT = "announcement"
+    DELIVERY_MARKETING = "marketing"
+    DELIVERY_CHOICES = [
+        (DELIVERY_ANNOUNCEMENT, "Service announcement"),
+        (DELIVERY_MARKETING, "Marketing"),
+    ]
+
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        related_name="admin_push_broadcasts",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+    )
+    title = models.CharField(max_length=150)
+    message = models.TextField()
+    audience = models.CharField(max_length=20, choices=AUDIENCE_CHOICES)
+    delivery_type = models.CharField(
+        max_length=20,
+        choices=DELIVERY_CHOICES,
+        default=DELIVERY_ANNOUNCEMENT,
+    )
+    action_url = models.CharField(max_length=500, blank=True)
+    selected_user_ids = models.JSONField(default=list, blank=True)
+    matched_users = models.PositiveIntegerField(default=0)
+    targeted_devices = models.PositiveIntegerField(default=0)
+    accepted_devices = models.PositiveIntegerField(default=0)
+    rejected_devices = models.PositiveIntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+
+    class Meta:
+        ordering = ["-created_at", "-id"]
+
+    def __str__(self):
+        return f"{self.title} ({self.get_audience_display()})"

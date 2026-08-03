@@ -13,6 +13,7 @@ from apps.listings.models import Listing
 from apps.notifications.services import (
     create_listing_deleted_notification,
     create_listing_rejected_notification,
+    create_listing_report_resolved_notification,
     notify_admins_new_report,
 )
 from apps.adminpanel.permissions import IsAdminOrModerator
@@ -196,7 +197,14 @@ class ResolveReportAPIView(APIView):
         report.is_resolved = True
         report.resolved_by = request.user
         report.resolved_at = timezone.now()
-        report.save(update_fields=["is_resolved", "resolved_by", "resolved_at"])
+        report.resolution_note = serializer.validated_data.get("note", "")
+        report.save(update_fields=[
+            "is_resolved",
+            "resolved_by",
+            "resolved_at",
+            "resolution_note",
+        ])
+        create_listing_report_resolved_notification(report)
 
         return Response(
             {
@@ -244,9 +252,16 @@ class RejectReportedListingAPIView(APIView):
         report.is_resolved = True
         report.resolved_by = request.user
         report.resolved_at = timezone.now()
-        report.save(update_fields=["is_resolved", "resolved_by", "resolved_at"])
+        report.resolution_note = "The reported ad was rejected."
+        report.save(update_fields=[
+            "is_resolved",
+            "resolved_by",
+            "resolved_at",
+            "resolution_note",
+        ])
 
         _finish_reported_listing_rejection(listing)
+        create_listing_report_resolved_notification(report)
 
         return Response(
             {
@@ -293,9 +308,16 @@ class DeleteReportedListingAPIView(APIView):
             report.is_resolved = True
             report.resolved_by = request.user
             report.resolved_at = timezone.now()
-            report.save(update_fields=["is_resolved", "resolved_by", "resolved_at"])
+            report.resolution_note = "The reported ad was removed from QOT."
+            report.save(update_fields=[
+                "is_resolved",
+                "resolved_by",
+                "resolved_at",
+                "resolution_note",
+            ])
 
             create_listing_deleted_notification(listing, deletion_reason)
+            create_listing_report_resolved_notification(report)
 
         return Response(
             {

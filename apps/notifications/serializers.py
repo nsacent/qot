@@ -16,9 +16,11 @@ class NotificationSerializer(serializers.ModelSerializer):
             "listing",
             "listing_title",
             "chat_thread",
+            "action_url",
             "is_read",
             "created_at",
         ]
+        read_only_fields = fields
 
 
 class PushDeviceSerializer(serializers.ModelSerializer):
@@ -46,14 +48,3 @@ class PushDeviceSerializer(serializers.ModelSerializer):
         ) or not token.endswith("]"):
             raise serializers.ValidationError("Enter a valid Expo push token.")
         return token
-        read_only_fields = [
-            "id",
-            "notification_type",
-            "title",
-            "message",
-            "listing",
-            "listing_title",
-            "chat_thread",
-            "is_read",
-            "created_at",
-        ]

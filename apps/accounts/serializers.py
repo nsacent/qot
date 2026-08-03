@@ -72,6 +72,7 @@ class UserProfileSerializer(serializers.ModelSerializer):
             "listing_rejections",
             "favorites",
             "followers",
+            "reviews",
             "reports",
             "renewals",
             "marketing",

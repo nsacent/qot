@@ -51,6 +51,7 @@ RESOURCE_NAMES = {
     "listings": "ad",
     "packages": "promotion package",
     "payments": "payment",
+    "push-notifications": "push notification",
     "reviews": "seller review",
     "users": "user",
 }
@@ -185,6 +186,9 @@ def _describe_action(method, path):
 
     if resource == "backups" and method == "POST":
         return "backup.create", "Created database backup", target_type, target_id
+
+    if resource == "push-notifications" and method == "POST":
+        return "notification.broadcast", "Sent push notification", target_type, target_id
 
     if method == "POST" and not target_id:
         return f"{resource}.create", f"Created {target_type}", target_type, ""

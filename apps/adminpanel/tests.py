@@ -16,9 +16,115 @@ from apps.categories.models import Category, CategoryFilter
 from apps.listings.models import Listing, ListingAttribute, ListingImage
 from apps.locations.models import City, Region
 from apps.adminpanel.backups import create_backup, list_backups, restore_backup
-from apps.adminpanel.models import AdminActivityLog
-from apps.notifications.models import Notification
+from apps.adminpanel.models import AdminActivityLog, AdminPushBroadcast
+from apps.notifications.models import Notification, PushDevice
 from PIL import Image
+
+
+class AdminPushBroadcastTests(APITestCase):
+    def setUp(self):
+        self.admin = User.objects.create_user(
+            phone="+256700009001",
+            email="push-admin@example.com",
+            full_name="Push Admin",
+            password="test-password",
+            role=User.ROLE_ADMIN,
+            is_staff=True,
+        )
+        self.user = User.objects.create_user(
+            phone="+256700009002",
+            email="push-user@example.com",
+            full_name="Push User",
+            password="test-password",
+        )
+        PushDevice.objects.create(
+            user=self.user,
+            expo_push_token="ExponentPushToken[admin-broadcast-test]",
+            platform=PushDevice.PLATFORM_ANDROID,
+        )
+
+    @patch("apps.adminpanel.views.broadcast_notification")
+    @patch("apps.adminpanel.views.deliver_notifications_push")
+    def test_admin_can_send_push_broadcast(self, deliver_push, broadcast):
+        deliver_push.return_value = {
+            "targeted": 1,
+            "accepted": 1,
+            "rejected": 0,
+        }
+        self.client.force_authenticate(self.admin)
+
+        response = self.client.post(
+            "/api/v1/admin-panel/push-notifications/",
+            {
+                "title": "Welcome to QOT",
+                "message": "A new marketplace update is ready.",
+                "audience": "android",
+                "delivery_type": "announcement",
+                "action_url": "qot://notifications",
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data["matched_users"], 1)
+        self.assertEqual(response.data["accepted_devices"], 1)
+        notification = Notification.objects.get(user=self.user)
+        self.assertEqual(notification.notification_type, Notification.TYPE_ANNOUNCEMENT)
+        self.assertEqual(notification.action_url, "qot://notifications")
+        deliver_push.assert_called_once()
+        broadcast.assert_called_once_with(notification)
+        self.assertTrue(AdminPushBroadcast.objects.filter(created_by=self.admin).exists())
+
+    @patch("apps.adminpanel.views.deliver_notifications_push")
+    def test_marketing_broadcast_respects_opt_in(self, deliver_push):
+        deliver_push.return_value = {
+            "targeted": 0,
+            "accepted": 0,
+            "rejected": 0,
+        }
+        self.client.force_authenticate(self.admin)
+
+        response = self.client.post(
+            "/api/v1/admin-panel/push-notifications/",
+            {
+                "title": "Promotion",
+                "message": "A marketing update.",
+                "audience": "all",
+                "delivery_type": "marketing",
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data["matched_users"], 0)
+        self.assertFalse(Notification.objects.filter(user=self.user).exists())
+
+    def test_regular_user_cannot_send_broadcast(self):
+        self.client.force_authenticate(self.user)
+        response = self.client.post(
+            "/api/v1/admin-panel/push-notifications/",
+            {
+                "title": "Not allowed",
+                "message": "This must not be delivered.",
+                "audience": "all",
+            },
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_selected_audience_requires_users(self):
+        self.client.force_authenticate(self.admin)
+        response = self.client.post(
+            "/api/v1/admin-panel/push-notifications/",
+            {
+                "title": "Selected users",
+                "message": "Only selected users should receive this.",
+                "audience": "selected",
+                "user_ids": [],
+            },
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
 
 
 class BackupServiceRoundTripTests(SimpleTestCase):
