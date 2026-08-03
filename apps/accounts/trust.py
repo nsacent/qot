@@ -31,7 +31,10 @@ def calculate_user_trust_score(user):
         score += 10
 
     # Reviews
-    reviews = user.received_reviews.filter(is_visible=True)
+    reviews = user.received_reviews.filter(
+        is_visible=True,
+        is_verified_transaction=True,
+    )
 
     total_reviews = reviews.count()
 

@@ -4,6 +4,7 @@ from apps.accounts.models import User
 from apps.listings.models import Listing
 
 from .models import SellerReview
+from .eligibility import get_reviewable_offer
 
 from apps.accounts.trust import calculate_user_trust_score
 from apps.notifications.services import create_review_notification
@@ -25,8 +26,13 @@ class SellerReviewSerializer(serializers.ModelSerializer):
             "listing",
             "listing_title",
             "rating",
+            "item_accuracy_rating",
+            "item_condition_rating",
+            "communication_rating",
             "comment",
             "is_visible",
+            "is_verified_transaction",
+            "verified_offer",
             "created_at",
             "updated_at",
         ]
@@ -37,6 +43,8 @@ class SellerReviewSerializer(serializers.ModelSerializer):
             "seller_name",
             "listing_title",
             "is_visible",
+            "is_verified_transaction",
+            "verified_offer",
             "created_at",
             "updated_at",
         ]
@@ -48,9 +56,24 @@ class SellerReviewCreateSerializer(serializers.ModelSerializer):
     )
     listing = serializers.PrimaryKeyRelatedField(
         queryset=Listing.objects.all(),
-        required=False,
-        allow_null=True,
+        required=True,
     )
+    item_accuracy_rating = serializers.IntegerField(
+        min_value=1,
+        max_value=5,
+        required=False,
+    )
+    item_condition_rating = serializers.IntegerField(
+        min_value=1,
+        max_value=5,
+        required=False,
+    )
+    communication_rating = serializers.IntegerField(
+        min_value=1,
+        max_value=5,
+        required=False,
+    )
+    comment = serializers.CharField(min_length=5, max_length=1000)
 
     class Meta:
         model = SellerReview
@@ -58,6 +81,9 @@ class SellerReviewCreateSerializer(serializers.ModelSerializer):
             "seller",
             "listing",
             "rating",
+            "item_accuracy_rating",
+            "item_condition_rating",
+            "communication_rating",
             "comment",
         ]
 
@@ -93,6 +119,37 @@ class SellerReviewCreateSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError(
                 "You have already reviewed this seller for this listing."
             )
+
+        verified_offer = get_reviewable_offer(reviewer, listing)
+        if verified_offer is None:
+            if listing.status != Listing.STATUS_SOLD or not listing.sold_at:
+                raise serializers.ValidationError(
+                    {
+                        "listing": (
+                            "This transaction can be reviewed after the seller "
+                            "marks the ad as sold."
+                        )
+                    }
+                )
+
+            raise serializers.ValidationError(
+                {
+                    "listing": (
+                        "Only the buyer whose offer was accepted can review "
+                        "this transaction."
+                    )
+                }
+            )
+
+        for field in (
+            "item_accuracy_rating",
+            "item_condition_rating",
+            "communication_rating",
+        ):
+            attrs.setdefault(field, attrs["rating"])
+
+        attrs["is_verified_transaction"] = True
+        attrs["verified_offer"] = verified_offer
 
         return attrs
 

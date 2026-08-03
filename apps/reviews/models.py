@@ -24,9 +24,20 @@ class SellerReview(models.Model):
     )
 
     rating = models.PositiveSmallIntegerField()
+    item_accuracy_rating = models.PositiveSmallIntegerField(null=True, blank=True)
+    item_condition_rating = models.PositiveSmallIntegerField(null=True, blank=True)
+    communication_rating = models.PositiveSmallIntegerField(null=True, blank=True)
     comment = models.TextField(blank=True)
 
     is_visible = models.BooleanField(default=True)
+    is_verified_transaction = models.BooleanField(default=False, db_index=True)
+    verified_offer = models.OneToOneField(
+        "chats.ChatMessage",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="transaction_review",
+    )
 
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

@@ -55,7 +55,10 @@ class PublicSellerListAPIView(generics.ListAPIView):
 
     def get_queryset(self):
         active_listing_filter = Q(listings__status=Listing.STATUS_ACTIVE)
-        visible_review_filter = Q(received_reviews__is_visible=True)
+        visible_review_filter = Q(
+            received_reviews__is_visible=True,
+            received_reviews__is_verified_transaction=True,
+        )
         active_view_totals = (
             Listing.objects
             .filter(

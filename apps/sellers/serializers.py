@@ -98,6 +98,7 @@ class PublicSellerSerializer(serializers.ModelSerializer):
 
         average = obj.received_reviews.filter(
             is_visible=True,
+            is_verified_transaction=True,
         ).aggregate(
             average=Avg("rating"),
         )["average"]
@@ -111,6 +112,7 @@ class PublicSellerSerializer(serializers.ModelSerializer):
 
         return obj.received_reviews.filter(
             is_visible=True,
+            is_verified_transaction=True,
         ).count()
 
     def get_followers_count(self, obj):

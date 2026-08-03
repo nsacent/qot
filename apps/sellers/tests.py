@@ -177,6 +177,7 @@ class SellerFollowTests(APITestCase):
             seller=self.seller,
             listing=leading_listing,
             rating=4,
+            is_verified_transaction=True,
         )
 
         second_seller = User.objects.create_user(
@@ -202,6 +203,7 @@ class SellerFollowTests(APITestCase):
             seller=second_seller,
             listing=second_listing,
             rating=5,
+            is_verified_transaction=True,
         )
 
         low_rated_seller = User.objects.create_user(
@@ -227,6 +229,7 @@ class SellerFollowTests(APITestCase):
             seller=low_rated_seller,
             listing=low_rated_listing,
             rating=3,
+            is_verified_transaction=True,
         )
 
         unverified_seller = User.objects.create_user(
@@ -252,6 +255,7 @@ class SellerFollowTests(APITestCase):
             seller=unverified_seller,
             listing=unverified_listing,
             rating=5,
+            is_verified_transaction=True,
         )
         Listing.objects.create(
             seller=self.follower,

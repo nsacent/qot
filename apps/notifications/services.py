@@ -87,6 +87,9 @@ def _notification_app_url(notification):
     if notification.action_url.startswith("qot://"):
         return notification.action_url
 
+    if notification.action_url == "/account/my-reviews":
+        return "qot://my-reviews"
+
     if notification.notification_type == Notification.TYPE_LISTING_DELETED:
         return "qot://notifications"
 
@@ -598,14 +601,67 @@ def create_review_notification(review):
     return create_notification(
         user=review.seller,
         notification_type=Notification.TYPE_REVIEW,
-        title="You received a new review",
+        title="You received a verified purchase review",
         message=(
-            f"{review.reviewer.full_name} left you a {review.rating}-star review"
+            f"{review.reviewer.full_name} left you a verified {review.rating}-star review"
             f"{subject}."
         ),
         listing=listing,
         preference_key="reviews",
     )
+
+
+def create_transaction_review_prompts(listing):
+    from apps.chats.models import ChatMessage
+
+    accepted_offers = (
+        ChatMessage.objects
+        .filter(
+            thread__listing=listing,
+            message_type=ChatMessage.TYPE_OFFER,
+            offer_status=ChatMessage.OFFER_ACCEPTED,
+        )
+        .select_related("sender", "thread")
+        .order_by("-created_at", "-id")
+    )
+    prompted_buyers = set()
+    notifications = []
+
+    for offer in accepted_offers:
+        if offer.sender_id in prompted_buyers:
+            continue
+        if offer.sender.given_reviews.filter(
+            listing=listing,
+            is_verified_transaction=True,
+        ).exists():
+            prompted_buyers.add(offer.sender_id)
+            continue
+        if Notification.objects.filter(
+            user=offer.sender,
+            listing=listing,
+            title="Your purchase is ready to review",
+        ).exists():
+            prompted_buyers.add(offer.sender_id)
+            continue
+
+        notification = create_notification(
+            user=offer.sender,
+            notification_type=Notification.TYPE_REVIEW,
+            title="Your purchase is ready to review",
+            message=(
+                f"'{listing.title}' was marked as sold. Share your verified "
+                "purchase experience to help other QOT buyers."
+            ),
+            listing=listing,
+            chat_thread=offer.thread,
+            action_url="/account/my-reviews",
+            preference_key="reviews",
+        )
+        if notification:
+            notifications.append(notification)
+        prompted_buyers.add(offer.sender_id)
+
+    return notifications
 
 
 def create_listing_report_resolved_notification(report):

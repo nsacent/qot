@@ -235,7 +235,10 @@ class AdminUserDetailSerializer(AdminUserSerializer):
     def get_stats(self, obj):
         paid_payments = obj.payments.filter(status=Payment.STATUS_PAID)
         paid_spend = paid_payments.aggregate(total=Sum("amount"))["total"] or 0
-        review_summary = obj.received_reviews.filter(is_visible=True).aggregate(
+        review_summary = obj.received_reviews.filter(
+            is_visible=True,
+            is_verified_transaction=True,
+        ).aggregate(
             total=Count("id"),
             average=Avg("rating"),
         )
@@ -739,8 +742,13 @@ class AdminSellerReviewSerializer(serializers.ModelSerializer):
             "listing",
             "listing_title",
             "rating",
+            "item_accuracy_rating",
+            "item_condition_rating",
+            "communication_rating",
             "comment",
             "is_visible",
+            "is_verified_transaction",
+            "verified_offer",
             "created_at",
             "updated_at",
         ]

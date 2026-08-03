@@ -45,7 +45,10 @@ from datetime import timedelta
 from django.utils import timezone
 
 from apps.searches.alerts import notify_saved_search_matches_for_listing
-from apps.notifications.services import notify_admins_new_listing
+from apps.notifications.services import (
+    create_transaction_review_prompts,
+    notify_admins_new_listing,
+)
 
 
 def delete_replaced_image_files(old_names, new_names):
@@ -846,6 +849,7 @@ class MarkListingSoldAPIView(APIView):
         listing.status = Listing.STATUS_SOLD
         listing.sold_at = timezone.now()
         listing.save(update_fields=["status", "sold_at", "updated_at"])
+        create_transaction_review_prompts(listing)
 
         return Response(
             {
