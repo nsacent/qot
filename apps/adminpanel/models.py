@@ -72,6 +72,10 @@ class AdminPushBroadcast(models.Model):
         default=DELIVERY_ANNOUNCEMENT,
     )
     action_url = models.CharField(max_length=500, blank=True)
+    image = models.ImageField(
+        upload_to="admin/push-notifications/%Y/%m/",
+        blank=True,
+    )
     selected_user_ids = models.JSONField(default=list, blank=True)
     matched_users = models.PositiveIntegerField(default=0)
     targeted_devices = models.PositiveIntegerField(default=0)

@@ -23,6 +23,9 @@ from PIL import Image
 
 class AdminPushBroadcastTests(APITestCase):
     def setUp(self):
+        self.media_directory = tempfile.TemporaryDirectory()
+        self.media_settings = override_settings(MEDIA_ROOT=self.media_directory.name)
+        self.media_settings.enable()
         self.admin = User.objects.create_user(
             phone="+256700009001",
             email="push-admin@example.com",
@@ -41,6 +44,24 @@ class AdminPushBroadcastTests(APITestCase):
             user=self.user,
             expo_push_token="ExponentPushToken[admin-broadcast-test]",
             platform=PushDevice.PLATFORM_ANDROID,
+        )
+
+    def tearDown(self):
+        self.media_settings.disable()
+        self.media_directory.cleanup()
+        super().tearDown()
+
+    @staticmethod
+    def make_image(name="push-image.jpg"):
+        image_bytes = BytesIO()
+        Image.new("RGB", (1200, 600), color=(244, 105, 22)).save(
+            image_bytes,
+            format="JPEG",
+        )
+        return SimpleUploadedFile(
+            name,
+            image_bytes.getvalue(),
+            content_type="image/jpeg",
         )
 
     @patch("apps.adminpanel.views.broadcast_notification")
@@ -125,6 +146,40 @@ class AdminPushBroadcastTests(APITestCase):
             format="json",
         )
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    @patch("apps.adminpanel.views.broadcast_notification")
+    @patch("apps.adminpanel.views.deliver_notifications_push")
+    def test_broadcast_image_is_saved_and_attached_to_notification(
+        self,
+        deliver_push,
+        broadcast,
+    ):
+        deliver_push.return_value = {
+            "targeted": 1,
+            "accepted": 1,
+            "rejected": 0,
+        }
+        self.client.force_authenticate(self.admin)
+
+        response = self.client.post(
+            "/api/v1/admin-panel/push-notifications/",
+            {
+                "title": "Picture update",
+                "message": "See what is new on QOT.",
+                "audience": "selected",
+                "delivery_type": "announcement",
+                "image": self.make_image(),
+                "user_ids[0]": str(self.user.id),
+            },
+            format="multipart",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertIn("/media/admin/push-notifications/", response.data["image_url"])
+        self.assertTrue(response.data["image_url"].endswith(".jpg"))
+        notification = Notification.objects.get(user=self.user)
+        self.assertEqual(notification.image_url, response.data["image_url"])
+        broadcast.assert_called_once_with(notification)
 
 
 class BackupServiceRoundTripTests(SimpleTestCase):

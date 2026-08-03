@@ -66,6 +66,7 @@ class AdminPushBroadcastSerializer(serializers.ModelSerializer):
         source="get_delivery_type_display",
         read_only=True,
     )
+    image_url = serializers.SerializerMethodField()
 
     class Meta:
         model = AdminPushBroadcast
@@ -80,6 +81,7 @@ class AdminPushBroadcastSerializer(serializers.ModelSerializer):
             "delivery_type",
             "delivery_type_label",
             "action_url",
+            "image_url",
             "selected_user_ids",
             "matched_users",
             "targeted_devices",
@@ -88,6 +90,13 @@ class AdminPushBroadcastSerializer(serializers.ModelSerializer):
             "created_at",
         ]
         read_only_fields = fields
+
+    def get_image_url(self, obj):
+        if not obj.image:
+            return ""
+
+        request = self.context.get("request")
+        return request.build_absolute_uri(obj.image.url) if request else obj.image.url
 
 
 class AdminPushBroadcastCreateSerializer(serializers.Serializer):
@@ -105,6 +114,7 @@ class AdminPushBroadcastCreateSerializer(serializers.Serializer):
         allow_blank=True,
         max_length=500,
     )
+    image = serializers.ImageField(required=False, allow_null=True)
     user_ids = serializers.ListField(
         child=serializers.IntegerField(min_value=1),
         required=False,
@@ -122,6 +132,15 @@ class AdminPushBroadcastCreateSerializer(serializers.Serializer):
                 "Use a QOT app link beginning qot:// or a QOT web path beginning /."
             )
         return clean_value
+
+    def validate_image(self, image):
+        if image is None:
+            return image
+        if image.size > 5 * 1024 * 1024:
+            raise serializers.ValidationError("Use an image no larger than 5 MB.")
+        if image.content_type not in {"image/jpeg", "image/png", "image/webp"}:
+            raise serializers.ValidationError("Use a JPEG, PNG, or WebP image.")
+        return image
 
     def validate(self, attrs):
         user_ids = list(dict.fromkeys(attrs.get("user_ids", [])))

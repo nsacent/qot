@@ -17,6 +17,7 @@ class NotificationSerializer(serializers.ModelSerializer):
             "listing_title",
             "chat_thread",
             "action_url",
+            "image_url",
             "is_read",
             "created_at",
         ]

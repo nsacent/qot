@@ -63,6 +63,7 @@ class Notification(models.Model):
     )
 
     action_url = models.CharField(max_length=500, blank=True)
+    image_url = models.URLField(max_length=1000, blank=True)
 
     is_read = models.BooleanField(default=False, db_index=True)
 

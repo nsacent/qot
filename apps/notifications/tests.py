@@ -91,6 +91,7 @@ class NotificationPreferenceServiceTests(TestCase):
                 notification_type=Notification.TYPE_MESSAGE,
                 title="New message",
                 message="A buyer replied to your ad.",
+                image_url="https://api.qot.ug/media/push/message.jpg",
             )
 
         payload = post.call_args.kwargs["json"][0]
@@ -98,6 +99,10 @@ class NotificationPreferenceServiceTests(TestCase):
         self.assertEqual(payload["data"]["notification_id"], notification.id)
         self.assertEqual(payload["data"]["url"], "qot://notifications")
         self.assertEqual(payload["badge"], 1)
+        self.assertEqual(
+            payload["richContent"],
+            {"image": "https://api.qot.ug/media/push/message.jpg"},
+        )
 
 
 class PushDeviceAPITests(APITestCase):

@@ -123,8 +123,9 @@ def deliver_notification_push(notification_id):
 
     for offset in range(0, len(devices), 100):
         device_batch = devices[offset:offset + 100]
-        messages = [
-            {
+        messages = []
+        for device in device_batch:
+            message = {
                 "to": device.expo_push_token,
                 "title": notification.title,
                 "body": notification.message,
@@ -136,10 +137,12 @@ def deliver_notification_push(notification_id):
                     "url": app_url,
                     "notification_id": notification.id,
                     "notification_type": notification.notification_type,
+                    "image_url": notification.image_url,
                 },
             }
-            for device in device_batch
-        ]
+            if notification.image_url:
+                message["richContent"] = {"image": notification.image_url}
+            messages.append(message)
 
         try:
             response = requests.post(
@@ -206,22 +209,24 @@ def deliver_notifications_push(notifications, platform=None):
         messages = []
         for device in device_batch:
             notification = notification_by_user[device.user_id]
-            messages.append(
-                {
-                    "to": device.expo_push_token,
-                    "title": notification.title,
-                    "body": notification.message,
-                    "sound": "default",
-                    "priority": "high",
-                    "channelId": "qot-updates",
-                    "badge": unread_counts.get(device.user_id, 1),
-                    "data": {
-                        "url": _notification_app_url(notification),
-                        "notification_id": notification.id,
-                        "notification_type": notification.notification_type,
-                    },
-                }
-            )
+            message = {
+                "to": device.expo_push_token,
+                "title": notification.title,
+                "body": notification.message,
+                "sound": "default",
+                "priority": "high",
+                "channelId": "qot-updates",
+                "badge": unread_counts.get(device.user_id, 1),
+                "data": {
+                    "url": _notification_app_url(notification),
+                    "notification_id": notification.id,
+                    "notification_type": notification.notification_type,
+                    "image_url": notification.image_url,
+                },
+            }
+            if notification.image_url:
+                message["richContent"] = {"image": notification.image_url}
+            messages.append(message)
 
         try:
             response = requests.post(
@@ -367,6 +372,7 @@ def broadcast_notification(notification):
         "listing": notification.listing_id,
         "chat_thread": notification.chat_thread_id,
         "action_url": notification.action_url,
+        "image_url": notification.image_url,
         "is_read": notification.is_read,
         "created_at": notification.created_at.isoformat(),
     }
@@ -389,6 +395,7 @@ def create_notification(
     listing=None,
     chat_thread=None,
     action_url="",
+    image_url="",
     preference_key=None,
     deliver_email=True,
     deliver_push=True,
@@ -408,6 +415,7 @@ def create_notification(
         listing=listing,
         chat_thread=chat_thread,
         action_url=action_url,
+        image_url=image_url,
     )
 
     broadcast_notification(notification)

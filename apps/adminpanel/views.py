@@ -24,6 +24,7 @@ from django.utils import timezone
 
 from .permissions import IsAdministrator, IsAdminOrModerator
 from .models import AdminActivityLog, AdminPushBroadcast
+from .push_images import optimize_push_image
 from .backups import (
     BackupBusyError,
     BackupError,
@@ -216,6 +217,7 @@ class AdminPushBroadcastListCreateAPIView(APIView):
                 "results": AdminPushBroadcastSerializer(
                     broadcasts,
                     many=True,
+                    context={"request": request},
                 ).data,
             },
             status=status.HTTP_200_OK,
@@ -270,8 +272,18 @@ class AdminPushBroadcastListCreateAPIView(APIView):
                 audience=audience,
                 delivery_type=delivery_type,
                 action_url=action_url,
+                image=(
+                    optimize_push_image(payload["image"])
+                    if payload.get("image")
+                    else None
+                ),
                 selected_user_ids=selected_user_ids,
                 matched_users=len(user_list),
+            )
+            image_url = (
+                request.build_absolute_uri(admin_broadcast.image.url)
+                if admin_broadcast.image
+                else ""
             )
             notifications = Notification.objects.bulk_create(
                 [
@@ -281,6 +293,7 @@ class AdminPushBroadcastListCreateAPIView(APIView):
                         title=admin_broadcast.title,
                         message=admin_broadcast.message,
                         action_url=admin_broadcast.action_url,
+                        image_url=image_url,
                     )
                     for user in user_list
                 ],
@@ -310,7 +323,10 @@ class AdminPushBroadcastListCreateAPIView(APIView):
         ])
 
         return Response(
-            AdminPushBroadcastSerializer(admin_broadcast).data,
+            AdminPushBroadcastSerializer(
+                admin_broadcast,
+                context={"request": request},
+            ).data,
             status=status.HTTP_201_CREATED,
         )
 
