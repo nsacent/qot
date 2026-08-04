@@ -1163,6 +1163,38 @@ class AlternativePhoneTests(APITestCase):
 
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
 
+    def test_alternative_phone_must_be_unique_across_accounts(self):
+        other_user = User.objects.create_user(
+            phone="+256702000203",
+            full_name="Other Alternative Phone",
+            password="strong-alternative-password",
+        )
+        other_user.profile.alternative_phone = "+256772000204"
+        other_user.profile.save(update_fields=["alternative_phone", "updated_at"])
+
+        response = self.client.patch(
+            "/api/v1/auth/me/",
+            {"alternative_phone": "0772 000 204"},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_alternative_phone_cannot_use_another_accounts_primary_phone(self):
+        User.objects.create_user(
+            phone="+256772000205",
+            full_name="Other Primary Phone",
+            password="strong-alternative-password",
+        )
+
+        response = self.client.patch(
+            "/api/v1/auth/me/",
+            {"alternative_phone": "0772 000 205"},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
 
 class RemovedSocialLoginTests(APITestCase):
     def test_removed_social_provider_endpoint_is_not_available(self):

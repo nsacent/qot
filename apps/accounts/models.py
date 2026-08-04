@@ -150,6 +150,35 @@ class UserProfile(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
+    class Meta:
+        constraints = [
+            models.CheckConstraint(
+                check=(
+                    models.Q(alternative_phone__isnull=True)
+                    | models.Q(alternative_phone__regex=r"^\+2567[0-9]{8}$")
+                ),
+                name="acct_profile_alt_phone_ug",
+            ),
+            models.UniqueConstraint(
+                fields=["alternative_phone"],
+                condition=models.Q(alternative_phone__isnull=False),
+                name="acct_profile_alt_phone_uniq",
+            ),
+        ]
+
+    def save(self, *args, **kwargs):
+        if self.alternative_phone:
+            try:
+                self.alternative_phone = normalize_ugandan_phone(
+                    self.alternative_phone
+                )
+            except ValueError as error:
+                raise ValidationError({"alternative_phone": str(error)}) from error
+        else:
+            self.alternative_phone = None
+
+        super().save(*args, **kwargs)
+
     def __str__(self):
         return f"Profile: {self.user}"
 

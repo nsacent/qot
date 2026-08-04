@@ -20,6 +20,43 @@ from .models import User, UserFollow, UserProfile, UserSession, VerificationCode
 from .phone_numbers import normalize_ugandan_phone
 
 
+def validate_unique_alternative_phone(value, *, user=None, profile=None):
+    if not value:
+        return None
+
+    try:
+        normalized_phone = normalize_ugandan_phone(value)
+    except ValueError as error:
+        raise serializers.ValidationError(str(error)) from error
+
+    if user and user.phone == normalized_phone:
+        raise serializers.ValidationError(
+            "Use a different number from your primary verified phone."
+        )
+
+    primary_numbers = User.objects.filter(phone=normalized_phone)
+    if user:
+        primary_numbers = primary_numbers.exclude(pk=user.pk)
+    if primary_numbers.exists():
+        raise serializers.ValidationError(
+            "This phone number is already used by another QOT account."
+        )
+
+    alternative_numbers = UserProfile.objects.filter(
+        alternative_phone=normalized_phone
+    )
+    if profile:
+        alternative_numbers = alternative_numbers.exclude(pk=profile.pk)
+    elif user:
+        alternative_numbers = alternative_numbers.exclude(user_id=user.pk)
+    if alternative_numbers.exists():
+        raise serializers.ValidationError(
+            "This alternative phone number is already in use."
+        )
+
+    return normalized_phone
+
+
 class UserProfileSerializer(serializers.ModelSerializer):
     default_city_name = serializers.CharField(
         source="default_city.name",
@@ -107,21 +144,13 @@ class UserProfileSerializer(serializers.ModelSerializer):
         return validate_timezone_name(value)
 
     def validate_alternative_phone(self, value):
-        if not value:
-            return None
-
-        try:
-            normalized_phone = normalize_ugandan_phone(value)
-        except ValueError as error:
-            raise serializers.ValidationError(str(error)) from error
-
         request = self.context.get("request")
-        if request and request.user.is_authenticated and request.user.phone == normalized_phone:
-            raise serializers.ValidationError(
-                "Use a different number from your primary verified phone."
-            )
-
-        return normalized_phone
+        user = request.user if request and request.user.is_authenticated else None
+        return validate_unique_alternative_phone(
+            value,
+            user=user,
+            profile=self.instance,
+        )
 
 
 def validate_timezone_name(value):
@@ -519,19 +548,14 @@ class ProfileUpdateSerializer(serializers.ModelSerializer):
         return validate_timezone_name(value)
 
     def validate_alternative_phone(self, value):
-        if not value:
-            return None
-
-        try:
-            normalized_phone = normalize_ugandan_phone(value)
-        except ValueError as error:
-            raise serializers.ValidationError(str(error)) from error
-
-        if self.instance and self.instance.phone == normalized_phone:
-            raise serializers.ValidationError(
-                "Use a different number from your primary verified phone."
-            )
-        return normalized_phone
+        profile = None
+        if self.instance:
+            profile = UserProfile.objects.filter(user=self.instance).first()
+        return validate_unique_alternative_phone(
+            value,
+            user=self.instance,
+            profile=profile,
+        )
 
     def validate_phone(self, value):
         if not value:
@@ -550,6 +574,11 @@ class ProfileUpdateSerializer(serializers.ModelSerializer):
         if duplicate.exists():
             raise serializers.ValidationError(
                 "An account with this phone number already exists."
+            )
+
+        if UserProfile.objects.filter(alternative_phone=normalized_phone).exists():
+            raise serializers.ValidationError(
+                "This phone number is already used as an alternative number."
             )
 
         return normalized_phone
