@@ -16,6 +16,7 @@ from apps.categories.models import Category, CategoryFilter, CategoryFilterOptio
 from apps.locations.models import Area, City, Region
 
 from .image_fingerprints import calculate_content_hash
+from .image_processing import process_listing_upload
 from .models import (
     Listing,
     ListingAttribute,
@@ -23,7 +24,7 @@ from .models import (
     ListingImage,
     PendingListingImage,
 )
-from .serializers import ListingCreateUpdateSerializer
+from .serializers import ListingCreateUpdateSerializer, ListingImageSerializer
 from .watermarks import WATERMARK_ALPHA, _qot_logo_mask, apply_qot_watermark
 
 
@@ -56,6 +57,30 @@ class ListingWatermarkTests(APITestCase):
             watermarked.getchannel("A").getextrema()[1],
             WATERMARK_ALPHA,
         )
+
+
+class ListingImageFormatTests(APITestCase):
+    def test_heic_upload_is_validated_and_optimized(self):
+        image_bytes = BytesIO()
+        Image.new("RGB", (800, 600), color=(249, 115, 22)).save(
+            image_bytes,
+            format="HEIF",
+            quality=90,
+        )
+        upload = SimpleUploadedFile(
+            "iphone-photo.heic",
+            image_bytes.getvalue(),
+            content_type="image/heic",
+        )
+
+        serializer = ListingImageSerializer(data={"image": upload})
+
+        self.assertTrue(serializer.is_valid(), serializer.errors)
+        processed = process_listing_upload(serializer.validated_data["image"])
+        self.assertTrue(processed.source.name.endswith(".webp"))
+        self.assertTrue(processed.detail.name.endswith(".webp"))
+        self.assertTrue(processed.card.name.endswith(".webp"))
+        self.assertTrue(processed.social.name.endswith(".webp"))
 
 
 class ListingLifecycleTests(APITestCase):
