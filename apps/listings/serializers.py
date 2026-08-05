@@ -87,14 +87,24 @@ class ListingImageSerializer(serializers.ModelSerializer):
                 "Image size must not exceed 8MB."
             )
 
-        allowed_extensions = ["jpg", "jpeg", "png", "webp", "heic", "heif"]
+        allowed_extensions = [
+            "jpg",
+            "jpeg",
+            "png",
+            "webp",
+            "heic",
+            "heics",
+            "heif",
+            "heifs",
+            "hif",
+        ]
         allowed_formats = ["JPEG", "PNG", "WEBP", "HEIF"]
 
         extension = image.name.split(".")[-1].lower()
 
         if extension not in allowed_extensions:
             raise serializers.ValidationError(
-                "Only JPG, JPEG, PNG, WEBP, HEIC, and HEIF images are allowed."
+                "Only JPG, JPEG, PNG, WEBP, HEIC, HEIF, and HIF images are allowed."
             )
 
         try:
@@ -112,7 +122,7 @@ class ListingImageSerializer(serializers.ModelSerializer):
 
             if img.format not in allowed_formats:
                 raise serializers.ValidationError(
-                    "Only JPG, JPEG, PNG, WEBP, HEIC, and HEIF images are allowed."
+                    "Only JPG, JPEG, PNG, WEBP, HEIC, HEIF, and HIF images are allowed."
                 )
 
             minimum_width, minimum_height = MIN_IMAGE_SIZE

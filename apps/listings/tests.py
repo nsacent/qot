@@ -60,27 +60,33 @@ class ListingWatermarkTests(APITestCase):
 
 
 class ListingImageFormatTests(APITestCase):
-    def test_heic_upload_is_validated_and_optimized(self):
+    def test_heif_family_uploads_are_validated_and_optimized(self):
         image_bytes = BytesIO()
         Image.new("RGB", (800, 600), color=(249, 115, 22)).save(
             image_bytes,
             format="HEIF",
             quality=90,
         )
-        upload = SimpleUploadedFile(
-            "iphone-photo.heic",
-            image_bytes.getvalue(),
-            content_type="image/heic",
-        )
 
-        serializer = ListingImageSerializer(data={"image": upload})
+        for filename, content_type in (
+            ("iphone-photo.heic", "image/heic"),
+            ("iphone-photo.heifs", "image/heif-sequence"),
+            ("iphone-photo.hif", "image/x-heif"),
+        ):
+            with self.subTest(filename=filename, content_type=content_type):
+                upload = SimpleUploadedFile(
+                    filename,
+                    image_bytes.getvalue(),
+                    content_type=content_type,
+                )
+                serializer = ListingImageSerializer(data={"image": upload})
 
-        self.assertTrue(serializer.is_valid(), serializer.errors)
-        processed = process_listing_upload(serializer.validated_data["image"])
-        self.assertTrue(processed.source.name.endswith(".webp"))
-        self.assertTrue(processed.detail.name.endswith(".webp"))
-        self.assertTrue(processed.card.name.endswith(".webp"))
-        self.assertTrue(processed.social.name.endswith(".webp"))
+                self.assertTrue(serializer.is_valid(), serializer.errors)
+                processed = process_listing_upload(serializer.validated_data["image"])
+                self.assertTrue(processed.source.name.endswith(".webp"))
+                self.assertTrue(processed.detail.name.endswith(".webp"))
+                self.assertTrue(processed.card.name.endswith(".webp"))
+                self.assertTrue(processed.social.name.endswith(".webp"))
 
 
 class ListingLifecycleTests(APITestCase):
