@@ -297,6 +297,10 @@ class ListingListSerializer(serializers.ModelSerializer):
         source="city.name",
         read_only=True,
     )
+    region_name = serializers.CharField(
+        source="city.region.name",
+        read_only=True,
+    )
     area_name = serializers.CharField(
         source="area.name",
         read_only=True,
@@ -319,6 +323,7 @@ class ListingListSerializer(serializers.ModelSerializer):
             "category_parent_name",
             "city",
             "city_name",
+            "region_name",
             "area",
             "area_name",
             "price",
@@ -398,6 +403,10 @@ class ListingDetailSerializer(serializers.ModelSerializer):
         source="city.name",
         read_only=True,
     )
+    region_name = serializers.CharField(
+        source="city.region.name",
+        read_only=True,
+    )
     area_name = serializers.CharField(
         source="area.name",
         read_only=True,
@@ -441,6 +450,7 @@ class ListingDetailSerializer(serializers.ModelSerializer):
             "category_parent_name",
             "city",
             "city_name",
+            "region_name",
             "area",
             "area_name",
             "description",

@@ -208,9 +208,12 @@ class ListingLifecycleTests(APITestCase):
 
         self.assertEqual(detail_response.status_code, status.HTTP_200_OK)
         self.assertEqual(detail_response.data["area"], self.area.id)
+        self.assertEqual(detail_response.data["region_name"], "Test Region")
         self.assertEqual(detail_response.data["area_name"], "Test Division")
         self.assertEqual(filtered_response.status_code, status.HTTP_200_OK)
         self.assertEqual(filtered_response.data["count"], 1)
+        self.assertEqual(filtered_response.data["results"][0]["region_name"], "Test Region")
+        self.assertEqual(filtered_response.data["results"][0]["area_name"], "Test Division")
 
     def test_ad_area_must_belong_to_selected_city(self):
         other_city = City.objects.create(
