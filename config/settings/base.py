@@ -130,7 +130,11 @@ DATABASES = {
         "PASSWORD": config("POSTGRES_PASSWORD", default=""),
         "HOST": config("POSTGRES_HOST", default="127.0.0.1"),
         "PORT": config("POSTGRES_PORT", default="5432"),
-        "CONN_MAX_AGE": 60,
+        # Daphne serves synchronous Django views through a thread pool. Keeping
+        # one persistent connection per worker thread can exhaust PostgreSQL
+        # during mobile request bursts, so ASGI requests close connections at
+        # the end of each request instead.
+        "CONN_MAX_AGE": config("POSTGRES_CONN_MAX_AGE", cast=int, default=0),
     }
 }
 
