@@ -12,6 +12,9 @@ MODERATION_PATH_PREFIX = "/api/v1/moderation/"
 API_PATH_PREFIX = "/api/v1/"
 MUTATING_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
 MAX_JSON_BODY_BYTES = 64 * 1024
+NON_AUDITED_PATHS = {
+    "/api/v1/notifications/devices/",
+}
 SENSITIVE_KEY_PARTS = {
     "authorization",
     "cookie",
@@ -213,6 +216,7 @@ class AdminActivityAuditMiddleware:
         should_trace = (
             request.method in MUTATING_METHODS
             and request.path.startswith(API_PATH_PREFIX)
+            and request.path not in NON_AUDITED_PATHS
             and not request.path.startswith(f"{ADMIN_PATH_PREFIX}activity/")
         )
         payload = _read_json_payload(request) if should_trace else {}
