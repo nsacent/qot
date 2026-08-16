@@ -129,6 +129,14 @@ class PushDeviceAPITests(APITestCase):
         self.assertEqual(registered.status_code, status.HTTP_201_CREATED)
         self.assertTrue(PushDevice.objects.get(user=self.user).is_active)
 
+        registered_again = self.client.post(
+            "/api/v1/notifications/devices/",
+            payload,
+            format="json",
+        )
+        self.assertEqual(registered_again.status_code, status.HTTP_200_OK)
+        self.assertEqual(PushDevice.objects.filter(expo_push_token=payload["expo_push_token"]).count(), 1)
+
         disabled = self.client.delete(
             "/api/v1/notifications/devices/",
             {"expo_push_token": payload["expo_push_token"]},
@@ -136,6 +144,14 @@ class PushDeviceAPITests(APITestCase):
         )
         self.assertEqual(disabled.status_code, status.HTTP_204_NO_CONTENT)
         self.assertFalse(PushDevice.objects.get(user=self.user).is_active)
+
+        reactivated = self.client.post(
+            "/api/v1/notifications/devices/",
+            payload,
+            format="json",
+        )
+        self.assertEqual(reactivated.status_code, status.HTTP_200_OK)
+        self.assertTrue(PushDevice.objects.get(user=self.user).is_active)
 
     def test_invalid_push_token_is_rejected(self):
         response = self.client.post(

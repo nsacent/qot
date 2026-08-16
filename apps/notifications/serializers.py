@@ -40,6 +40,12 @@ class PushDeviceSerializer(serializers.ModelSerializer):
             "is_active",
             "last_registered_at",
         ]
+        # The registration view intentionally upserts by Expo token. Let the
+        # database-backed update_or_create handle the unique field instead of
+        # rejecting an already registered phone during serializer validation.
+        extra_kwargs = {
+            "expo_push_token": {"validators": []},
+        }
 
     def validate_expo_push_token(self, value):
         token = str(value or "").strip()
