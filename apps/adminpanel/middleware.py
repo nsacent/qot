@@ -230,6 +230,7 @@ class AdminActivityAuditMiddleware:
     def _record(self, request, response, payload):
         user = getattr(request, "user", None)
         authenticated = bool(user and getattr(user, "is_authenticated", False))
+        deleted_account = authenticated and getattr(user, "pk", None) is None
         role = str(getattr(user, "role", "") or "").lower() if authenticated else "anonymous"
         user_agent = str(request.META.get("HTTP_USER_AGENT", "") or "")[:500]
         platform_header = str(
@@ -255,9 +256,21 @@ class AdminActivityAuditMiddleware:
 
         try:
             AdminActivityLog.objects.create(
-                actor=user if authenticated else None,
-                actor_name=(getattr(user, "full_name", "") or "") if authenticated else "Anonymous user",
-                actor_email=(getattr(user, "email", "") or "") if authenticated else "",
+                actor=user if authenticated and not deleted_account else None,
+                actor_name=(
+                    "Deleted QOT user"
+                    if deleted_account
+                    else (getattr(user, "full_name", "") or "")
+                    if authenticated
+                    else "Anonymous user"
+                ),
+                actor_email=(
+                    ""
+                    if deleted_account
+                    else (getattr(user, "email", "") or "")
+                    if authenticated
+                    else ""
+                ),
                 actor_role=role or "user",
                 action=action,
                 description=description,

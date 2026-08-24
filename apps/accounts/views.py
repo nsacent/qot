@@ -28,6 +28,7 @@ from .serializers import (
     PhoneOTPRequestSerializer,
     PhoneOTPConfirmSerializer,
     GoogleLoginSerializer,
+    AppleLoginSerializer,
     UserSerializer,
     UserSessionSerializer,
     ProfileUpdateSerializer,
@@ -36,6 +37,7 @@ from .serializers import (
     SendVerificationCodeSerializer,
     ConfirmVerificationCodeSerializer,
 )
+from .deletion import permanently_delete_user_account
 
 from .services import (
     OTPRateLimitError,
@@ -396,6 +398,106 @@ class GoogleLoginAPIView(APIView):
         )
 
 
+class AppleLoginAPIView(APIView):
+    permission_classes = [permissions.AllowAny]
+
+    def post(self, request):
+        if request.content_type != "application/json":
+            return Response(
+                {"detail": "Apple sign-in requires a JSON request."},
+                status=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
+            )
+
+        serializer = AppleLoginSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        identity = serializer.validated_data["identity"]
+        apple_sub = str(identity["sub"])
+        email = str(identity.get("email") or "").strip().lower()
+        full_name = serializer.validated_data.get("full_name") or ""
+
+        user = User.objects.filter(apple_sub=apple_sub).first()
+        found_by_email = False
+
+        if user is None and email:
+            user = User.objects.filter(email__iexact=email).first()
+            found_by_email = user is not None
+
+        if user and not user.is_active:
+            return Response(
+                {"detail": "This account is inactive."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        if user and user.is_banned:
+            return Response(
+                {"detail": "This account has been banned."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        if found_by_email:
+            if user.apple_sub and user.apple_sub != apple_sub:
+                return Response(
+                    {"detail": "This email is linked to another Apple account."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            user.apple_sub = apple_sub
+            user.is_verified = True
+            user.email_verified_at = timezone.now()
+            user.save(update_fields=[
+                "apple_sub",
+                "is_verified",
+                "email_verified_at",
+                "updated_at",
+            ])
+
+        if user is None:
+            if not email:
+                return Response(
+                    {
+                        "detail": (
+                            "Apple did not provide an email address for this new "
+                            "account. Please try Apple sign-in again."
+                        )
+                    },
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            user = User.objects.create_user(
+                email=email,
+                full_name=full_name or email.split("@", 1)[0] or "QOT member",
+                password=None,
+                apple_sub=apple_sub,
+                is_verified=True,
+                email_verified_at=timezone.now(),
+            )
+
+        if email and user.email and user.email.lower() == email and not user.email_verified:
+            user.email_verified_at = timezone.now()
+            user.is_verified = True
+            user.save(update_fields=[
+                "email_verified_at",
+                "is_verified",
+                "updated_at",
+            ])
+
+        tokens = get_tokens_for_user(
+            user,
+            keep_signed_in=serializer.validated_data["keep_signed_in"],
+            request=request,
+        )
+
+        return Response(
+            {
+                "message": "Apple sign-in successful.",
+                "user": UserSerializer(user).data,
+                "tokens": tokens,
+            },
+            status=status.HTTP_200_OK,
+        )
+
+
 class LogoutAPIView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
@@ -669,6 +771,36 @@ class FreezeAccountAPIView(APIView):
                 "message": (
                     "Your QOT account is frozen. Your public profile and ads are hidden. "
                     "Sign in with a phone OTP whenever you want to reactivate it."
+                )
+            },
+            status=status.HTTP_200_OK,
+        )
+
+
+class DeleteAccountAPIView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def delete(self, request):
+        if str(request.data.get("confirmation") or "").strip().upper() != "DELETE":
+            return Response(
+                {"confirmation": ["Enter DELETE to permanently remove this account."]},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        user = request.user
+        if user.is_staff or user.is_superuser:
+            return Response(
+                {"detail": "Administrator accounts cannot be deleted here."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        permanently_delete_user_account(user)
+
+        return Response(
+            {
+                "message": (
+                    "Your QOT account and associated personal data have been "
+                    "permanently deleted."
                 )
             },
             status=status.HTTP_200_OK,

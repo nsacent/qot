@@ -10,6 +10,7 @@ from .views import (
     SendPhoneLoginCodeAPIView,
     ConfirmPhoneLoginCodeAPIView,
     GoogleLoginAPIView,
+    AppleLoginAPIView,
     LogoutAPIView,
     UserSessionListAPIView,
     RegisterCurrentSessionAPIView,
@@ -17,6 +18,7 @@ from .views import (
     RevokeOtherUserSessionsAPIView,
     MeAPIView,
     FreezeAccountAPIView,
+    DeleteAccountAPIView,
     PasswordResetRequestAPIView,
     PasswordResetConfirmAPIView,
     SendVerificationCodeAPIView,
@@ -36,6 +38,7 @@ urlpatterns = [
     path("otp/send/", SendPhoneLoginCodeAPIView.as_view(), name="otp_send"),
     path("otp/confirm/", ConfirmPhoneLoginCodeAPIView.as_view(), name="otp_confirm"),
     path("google/", GoogleLoginAPIView.as_view(), name="google_login"),
+    path("apple/", AppleLoginAPIView.as_view(), name="apple_login"),
     path("logout/", LogoutAPIView.as_view(), name="logout"),
     path("token/refresh/", QOTTokenRefreshView.as_view(), name="token_refresh"),
     path("me/", MeAPIView.as_view(), name="me"),
@@ -56,6 +59,7 @@ urlpatterns = [
         name="sessions_revoke",
     ),
     path("account/freeze/", FreezeAccountAPIView.as_view(), name="account_freeze"),
+    path("account/", DeleteAccountAPIView.as_view(), name="account_delete"),
 
     path(
         "password-reset/request/",

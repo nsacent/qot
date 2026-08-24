@@ -191,6 +191,7 @@ SIMPLE_JWT = {
 
 KEEP_SIGNED_IN_LIFETIME = timedelta(days=365)
 GOOGLE_OAUTH_CLIENT_ID = config("GOOGLE_OAUTH_CLIENT_ID", default="")
+APPLE_OAUTH_CLIENT_ID = config("APPLE_OAUTH_CLIENT_ID", default="ug.qot.mobile")
 
 AFRICAS_TALKING_USERNAME = _africas_talking_config(
     "AFRICAS_TALKING_USERNAME",

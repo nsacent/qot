@@ -643,6 +643,53 @@ class AccountFreezeTests(APITestCase):
         self.assertIsNotNone(self.user.frozen_at)
 
 
+class AccountDeletionTests(APITestCase):
+    delete_url = "/api/v1/auth/account/"
+
+    def setUp(self):
+        self.user = User.objects.create_user(
+            phone="+256700000090",
+            email="delete@example.com",
+            full_name="Delete Test",
+            password="strong-test-password",
+        )
+        self.client.force_authenticate(self.user)
+
+    def test_deletion_requires_typed_confirmation(self):
+        response = self.client.delete(
+            self.delete_url,
+            {"confirmation": True},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertTrue(User.objects.filter(pk=self.user.pk).exists())
+
+    def test_deletion_permanently_removes_the_user(self):
+        user_id = self.user.pk
+        response = self.client.delete(
+            self.delete_url,
+            {"confirmation": "DELETE"},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertFalse(User.objects.filter(pk=user_id).exists())
+
+    def test_administrator_cannot_delete_account_here(self):
+        self.user.is_staff = True
+        self.user.save(update_fields=["is_staff", "updated_at"])
+
+        response = self.client.delete(
+            self.delete_url,
+            {"confirmation": "DELETE"},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertTrue(User.objects.filter(pk=self.user.pk).exists())
+
+
 class AuthenticationSessionTests(APITestCase):
     login_url = "/api/v1/auth/login/"
     refresh_url = "/api/v1/auth/token/refresh/"
@@ -1019,6 +1066,98 @@ class GoogleAuthenticationTests(APITestCase):
 
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertFalse(User.objects.filter(email="google-user@example.com").exists())
+
+
+@override_settings(APPLE_OAUTH_CLIENT_ID="ug.qot.mobile")
+class AppleAuthenticationTests(APITestCase):
+    apple_url = "/api/v1/auth/apple/"
+
+    def apple_identity(self, **overrides):
+        identity = {
+            "sub": "apple-user-123",
+            "email": "apple-user@example.com",
+            "email_verified": "true",
+            "iss": "https://appleid.apple.com",
+            "aud": settings.APPLE_OAUTH_CLIENT_ID,
+        }
+        identity.update(overrides)
+        return identity
+
+    @patch("apps.accounts.serializers.verify_apple_identity_token")
+    def test_apple_sign_in_creates_verified_user_and_session(self, verify_token):
+        verify_token.return_value = self.apple_identity()
+
+        response = self.client.post(
+            self.apple_url,
+            {
+                "credential": "valid-apple-token",
+                "full_name": "Apple User",
+                "keep_signed_in": True,
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        user = User.objects.get(email="apple-user@example.com")
+        refresh = RefreshToken(response.data["tokens"]["refresh"])
+
+        self.assertEqual(user.apple_sub, "apple-user-123")
+        self.assertEqual(user.full_name, "Apple User")
+        self.assertTrue(user.is_verified)
+        self.assertFalse(user.has_usable_password())
+        self.assertTrue(refresh["keep_signed_in"])
+
+    @patch("apps.accounts.serializers.verify_apple_identity_token")
+    def test_apple_sign_in_links_an_existing_email(self, verify_token):
+        user = User.objects.create_user(
+            email="apple-user@example.com",
+            full_name="Existing Apple User",
+            password="existing-password",
+        )
+        verify_token.return_value = self.apple_identity()
+
+        response = self.client.post(
+            self.apple_url,
+            {"credential": "valid-apple-token"},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        user.refresh_from_db()
+        self.assertEqual(user.apple_sub, "apple-user-123")
+        self.assertTrue(user.email_verified)
+
+    @patch("apps.accounts.serializers.verify_apple_identity_token")
+    def test_returning_apple_user_can_sign_in_without_email_claim(self, verify_token):
+        user = User.objects.create_user(
+            email="apple-user@example.com",
+            full_name="Returning Apple User",
+            password=None,
+            apple_sub="apple-user-123",
+        )
+        verify_token.return_value = self.apple_identity(email=None)
+
+        response = self.client.post(
+            self.apple_url,
+            {"credential": "valid-apple-token"},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["user"]["id"], user.id)
+
+    @patch("apps.accounts.serializers.verify_apple_identity_token")
+    def test_new_apple_user_requires_an_email_claim(self, verify_token):
+        verify_token.return_value = self.apple_identity(email=None)
+
+        response = self.client.post(
+            self.apple_url,
+            {"credential": "valid-apple-token"},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertFalse(User.objects.filter(apple_sub="apple-user-123").exists())
 
 
 class SignedInDeviceTests(APITestCase):

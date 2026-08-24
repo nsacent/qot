@@ -13,11 +13,29 @@ from rest_framework_simplejwt.token_blacklist.models import OutstandingToken
 from rest_framework_simplejwt.utils import datetime_from_epoch
 from google.auth.transport import requests as google_requests
 from google.oauth2 import id_token as google_id_token
+import jwt
 
 from apps.locations.models import Area, City
 
 from .models import User, UserFollow, UserProfile, UserSession, VerificationCode
 from .phone_numbers import normalize_ugandan_phone
+
+
+_apple_jwk_client = jwt.PyJWKClient(
+    "https://appleid.apple.com/auth/keys",
+    cache_keys=True,
+)
+
+
+def verify_apple_identity_token(credential):
+    signing_key = _apple_jwk_client.get_signing_key_from_jwt(credential)
+    return jwt.decode(
+        credential,
+        signing_key.key,
+        algorithms=["RS256"],
+        audience=settings.APPLE_OAUTH_CLIENT_ID,
+        issuer="https://appleid.apple.com",
+    )
 
 
 def validate_unique_alternative_phone(value, *, user=None, profile=None):
@@ -419,6 +437,53 @@ class GoogleLoginSerializer(serializers.Serializer):
             )
 
         attrs["identity"] = identity
+        return attrs
+
+
+class AppleLoginSerializer(serializers.Serializer):
+    credential = serializers.CharField(write_only=True)
+    full_name = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        max_length=150,
+        write_only=True,
+    )
+    keep_signed_in = serializers.BooleanField(
+        default=True,
+        required=False,
+        write_only=True,
+    )
+
+    def validate(self, attrs):
+        client_id = str(settings.APPLE_OAUTH_CLIENT_ID or "").strip()
+        if not client_id:
+            raise serializers.ValidationError(
+                {"detail": "Apple sign-in is not configured on the server."}
+            )
+
+        try:
+            identity = verify_apple_identity_token(attrs["credential"])
+        except (jwt.PyJWTError, ValueError, TypeError):
+            raise serializers.ValidationError(
+                {"detail": "Apple could not verify this sign-in. Please try again."}
+            )
+
+        subject = str(identity.get("sub") or "").strip()
+        email = str(identity.get("email") or "").strip().lower()
+        email_verified = identity.get("email_verified")
+        is_verified_email = email_verified is True or str(email_verified).lower() == "true"
+
+        if not subject:
+            raise serializers.ValidationError(
+                {"detail": "Apple did not provide a valid account identifier."}
+            )
+        if email and not is_verified_email:
+            raise serializers.ValidationError(
+                {"detail": "Apple did not provide a verified email address."}
+            )
+
+        attrs["identity"] = identity
+        attrs["full_name"] = str(attrs.get("full_name") or "").strip()
         return attrs
 
 
