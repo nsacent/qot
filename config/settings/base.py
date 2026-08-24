@@ -280,6 +280,7 @@ CSRF_TRUSTED_ORIGINS = config(
 
 
 FRONTEND_URL = config("FRONTEND_URL", default="https://qot.ug")
+PUBLIC_API_URL = config("PUBLIC_API_URL", default="https://api.qot.ug")
 
 EMAIL_BACKEND = config(
     "EMAIL_BACKEND",

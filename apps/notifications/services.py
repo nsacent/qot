@@ -4,6 +4,7 @@ from django.conf import settings
 from django.core.mail import EmailMultiAlternatives
 from django.db import transaction
 from django.db.models import Count, Q
+from urllib.parse import urljoin
 import requests
 
 from apps.common.emailing import build_branded_email_html
@@ -16,6 +17,39 @@ EXPO_PUSH_URL = "https://exp.host/--/api/v2/push/send"
 
 def _frontend_url(path):
     return f"{settings.FRONTEND_URL.rstrip('/')}{path}"
+
+
+def _absolute_public_url(url):
+    clean_url = str(url or "").strip()
+    if not clean_url:
+        return ""
+    if clean_url.startswith(("https://", "http://")):
+        return clean_url
+    return urljoin(f"{settings.PUBLIC_API_URL.rstrip('/')}/", clean_url)
+
+
+def _listing_cover_url(listing):
+    if listing is None:
+        return ""
+
+    listing_image = (
+        listing.images
+        .order_by("-is_primary", "sort_order", "id")
+        .first()
+    )
+    if listing_image is None:
+        return ""
+
+    for field_name in ("social_image", "card_image", "image"):
+        image_field = getattr(listing_image, field_name, None)
+        if not image_field:
+            continue
+        try:
+            return _absolute_public_url(image_field.url)
+        except (ValueError, AttributeError):
+            continue
+
+    return ""
 
 
 def _send_branded_email(
@@ -145,6 +179,7 @@ def deliver_notification_push(notification_id):
             }
             if notification.image_url:
                 message["richContent"] = {"image": notification.image_url}
+                message["mutableContent"] = True
             messages.append(message)
 
         try:
@@ -229,6 +264,7 @@ def deliver_notifications_push(notifications, platform=None):
             }
             if notification.image_url:
                 message["richContent"] = {"image": notification.image_url}
+                message["mutableContent"] = True
             messages.append(message)
 
         try:
@@ -410,6 +446,10 @@ def create_notification(
         if preferences.get(preference_key, True) is False:
             return None
 
+    notification_image_url = _absolute_public_url(image_url)
+    if not notification_image_url and listing is not None:
+        notification_image_url = _listing_cover_url(listing)
+
     notification = Notification.objects.create(
         user=user,
         notification_type=notification_type,
@@ -418,7 +458,7 @@ def create_notification(
         listing=listing,
         chat_thread=chat_thread,
         action_url=action_url,
-        image_url=image_url,
+        image_url=notification_image_url,
     )
 
     broadcast_notification(notification)
