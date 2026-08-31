@@ -11,8 +11,15 @@ class Command(BaseCommand):
     help = "Create or refresh the ordinary, pre-verified App Store review account."
 
     EMAIL = "appreview@qot.ug"
-    PHONE = "+256700000000"
     FULL_NAME = "QOT App Reviewer"
+
+    @staticmethod
+    def available_review_phone():
+        for suffix in range(1, 1000):
+            phone = f"+256700000{suffix:03d}"
+            if not User.objects.filter(phone=phone).exists():
+                return phone
+        raise CommandError("No App Store review phone placeholder is available.")
 
     @transaction.atomic
     def handle(self, *args, **options):
@@ -22,21 +29,13 @@ class Command(BaseCommand):
                 "QOT_APP_REVIEW_PASSWORD must be set to at least 16 characters."
             )
 
-        conflicting_phone = User.objects.filter(phone=self.PHONE).exclude(
-            email__iexact=self.EMAIL
-        )
-        if conflicting_phone.exists():
-            raise CommandError(
-                "The App Store review phone placeholder is already in use."
-            )
-
         user = User.objects.filter(email__iexact=self.EMAIL).first()
         created = user is None
         if created:
             user = User(email=self.EMAIL)
 
         verified_at = timezone.now()
-        user.phone = self.PHONE
+        user.phone = user.phone or self.available_review_phone()
         user.email = self.EMAIL
         user.full_name = self.FULL_NAME
         user.role = User.ROLE_USER
