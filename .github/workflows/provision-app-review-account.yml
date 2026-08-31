@@ -24,4 +24,5 @@ jobs:
           script_stop: true
           script: |
             cd /home/qot.ug/public_html/api
-            venv/bin/python manage.py ensure_app_review_user
+            DJANGO_SETTINGS_MODULE=config.settings.prod \
+              venv/bin/python manage.py ensure_app_review_user
