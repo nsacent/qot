@@ -1,0 +1,27 @@
+name: Provision App Store Review Account
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  provision:
+    runs-on: ubuntu-latest
+    env:
+      QOT_APP_REVIEW_PASSWORD: ${{ secrets.QOT_APP_REVIEW_PASSWORD }}
+
+    steps:
+      - name: Create or refresh the reviewer account
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.QOT_VPS_HOST }}
+          username: ${{ secrets.QOT_VPS_USER }}
+          key: ${{ secrets.QOT_VPS_SSH_KEY }}
+          port: 22
+          envs: QOT_APP_REVIEW_PASSWORD
+          script_stop: true
+          script: |
+            cd /home/qot.ug/public_html/api
+            venv/bin/python manage.py ensure_app_review_user
