@@ -607,6 +607,14 @@ class FeatureListingSerializer(serializers.Serializer):
     )
 
 
+class RenewListingSerializer(serializers.Serializer):
+    days = serializers.IntegerField(
+        min_value=1,
+        max_value=365,
+        default=30,
+    )
+
+
 class AdminPaymentSerializer(serializers.ModelSerializer):
     user_name = serializers.CharField(source="user.full_name", read_only=True)
     user_phone = serializers.CharField(source="user.phone", read_only=True)

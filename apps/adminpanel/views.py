@@ -52,6 +52,7 @@ from .serializers import (
     ListingDeleteSerializer,
     UserBanSerializer,
     FeatureListingSerializer,
+    RenewListingSerializer,
     AdminPaymentSerializer,
     AdminMarkPaymentPaidSerializer,
     AdminMarkPaymentFailedSerializer,
@@ -775,6 +776,10 @@ class AdminRenewListingAPIView(APIView):
                 status=status.HTTP_404_NOT_FOUND,
             )
 
+        serializer = RenewListingSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        days = serializer.validated_data["days"]
+
         now = timezone.now()
         has_expired = (
             listing.status == Listing.STATUS_EXPIRED
@@ -798,7 +803,7 @@ class AdminRenewListingAPIView(APIView):
             )
 
         listing.status = Listing.STATUS_ACTIVE
-        listing.expires_at = now + timedelta(days=30)
+        listing.expires_at = now + timedelta(days=days)
         listing.sold_at = None
         listing.save(
             update_fields=[
@@ -813,7 +818,11 @@ class AdminRenewListingAPIView(APIView):
 
         return Response(
             {
-                "message": "Listing renewed successfully for 30 days.",
+                "message": (
+                    f"Listing renewed successfully for {days} "
+                    f"day{'s' if days != 1 else ''}."
+                ),
+                "renewal_days": days,
                 "listing": AdminListingSerializer(
                     listing,
                     context={"request": request},

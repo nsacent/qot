@@ -673,7 +673,7 @@ class AdminListingManagementTests(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertFalse(self.listing.is_featured)
 
-    def test_admin_can_renew_an_expired_listing_for_thirty_days(self):
+    def test_admin_can_select_how_many_days_to_renew_an_expired_listing(self):
         previous_expiry = timezone.now() - timedelta(days=2)
         self.listing.status = Listing.STATUS_EXPIRED
         self.listing.expires_at = previous_expiry
@@ -683,6 +683,7 @@ class AdminListingManagementTests(APITestCase):
         renewal_started_at = timezone.now()
         response = self.client.post(
             f"/api/v1/admin-panel/listings/{self.listing.id}/renew/",
+            {"days": 45},
             format="json",
         )
         self.listing.refresh_from_db()
@@ -692,18 +693,37 @@ class AdminListingManagementTests(APITestCase):
         self.assertIsNone(self.listing.sold_at)
         self.assertGreaterEqual(
             self.listing.expires_at,
-            renewal_started_at + timedelta(days=30),
+            renewal_started_at + timedelta(days=45),
         )
         self.assertLessEqual(
             self.listing.expires_at,
-            timezone.now() + timedelta(days=30),
+            timezone.now() + timedelta(days=45),
         )
+        self.assertEqual(response.data["renewal_days"], 45)
         self.assertEqual(response.data["listing"]["status"], Listing.STATUS_ACTIVE)
         self.assertNotEqual(response.data["listing"]["expires_at"], previous_expiry)
         activity = AdminActivityLog.objects.get(action="listing.renew")
         self.assertEqual(activity.actor, self.admin)
         self.assertEqual(activity.target_id, str(self.listing.id))
         self.assertEqual(activity.status_code, status.HTTP_200_OK)
+        self.assertEqual(activity.payload["days"], 45)
+
+    def test_admin_renewal_duration_must_be_between_one_and_365_days(self):
+        self.listing.status = Listing.STATUS_EXPIRED
+        self.listing.expires_at = timezone.now() - timedelta(days=1)
+        self.listing.save(update_fields=["status", "expires_at", "updated_at"])
+
+        for invalid_days in (0, 366):
+            with self.subTest(days=invalid_days):
+                response = self.client.post(
+                    f"/api/v1/admin-panel/listings/{self.listing.id}/renew/",
+                    {"days": invalid_days},
+                    format="json",
+                )
+                self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+        self.listing.refresh_from_db()
+        self.assertEqual(self.listing.status, Listing.STATUS_EXPIRED)
 
     def test_admin_cannot_renew_an_active_listing_before_expiry(self):
         current_expiry = timezone.now() + timedelta(days=5)
