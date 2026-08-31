@@ -763,6 +763,66 @@ class ApproveListingAPIView(APIView):
         )
 
 
+class AdminRenewListingAPIView(APIView):
+    permission_classes = [permissions.IsAuthenticated, IsAdminOrModerator]
+
+    def post(self, request, pk):
+        try:
+            listing = Listing.objects.get(pk=pk)
+        except Listing.DoesNotExist:
+            return Response(
+                {"detail": "Listing not found."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        now = timezone.now()
+        has_expired = (
+            listing.status == Listing.STATUS_EXPIRED
+            or (
+                listing.status == Listing.STATUS_ACTIVE
+                and listing.expires_at is not None
+                and listing.expires_at <= now
+            )
+        )
+
+        if not has_expired:
+            return Response(
+                {
+                    "detail": (
+                        "Only an expired ad can be renewed. Active ads must reach "
+                        "their expiry time first."
+                    ),
+                    "expires_at": listing.expires_at,
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        listing.status = Listing.STATUS_ACTIVE
+        listing.expires_at = now + timedelta(days=30)
+        listing.sold_at = None
+        listing.save(
+            update_fields=[
+                "status",
+                "expires_at",
+                "sold_at",
+                "updated_at",
+            ]
+        )
+
+        notify_saved_search_matches_for_listing(listing)
+
+        return Response(
+            {
+                "message": "Listing renewed successfully for 30 days.",
+                "listing": AdminListingSerializer(
+                    listing,
+                    context={"request": request},
+                ).data,
+            },
+            status=status.HTTP_200_OK,
+        )
+
+
 class RejectListingAPIView(APIView):
     permission_classes = [permissions.IsAuthenticated, IsAdminOrModerator]
 

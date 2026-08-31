@@ -33,6 +33,7 @@ PRIVATE_CONTENT_KEYS = {
 
 ACTION_NAMES = {
     "approve": ("listing.approve", "Approved ad"),
+    "renew": ("listing.renew", "Renewed ad"),
     "reject": ("listing.reject", "Rejected ad"),
     "feature": ("listing.feature", "Featured ad"),
     "unfeature": ("listing.unfeature", "Removed ad feature"),
