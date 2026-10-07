@@ -1048,19 +1048,45 @@ class ChatBlockAPIView(APIView):
         serializer = ChatBlockCreateSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
+        existing_block = ChatBlock.objects.filter(
+            blocker=request.user,
+            blocked_user=blocked_user,
+            thread=thread,
+        ).first()
+        should_create_report = not existing_block or not existing_block.is_active
+        reason = serializer.validated_data.get("reason", "").strip()
+
         block, created = ChatBlock.objects.update_or_create(
             blocker=request.user,
             blocked_user=blocked_user,
             thread=thread,
             defaults={
-                "reason": serializer.validated_data.get("reason", ""),
+                "reason": reason,
                 "is_active": True,
             },
         )
 
+        ChatThreadParticipantState.objects.update_or_create(
+            thread=thread,
+            user=request.user,
+            defaults={
+                "is_spam": True,
+                "is_archived": False,
+            },
+        )
+
+        if should_create_report:
+            ChatReport.objects.create(
+                thread=thread,
+                reporter=request.user,
+                reported_user=blocked_user,
+                reason=ChatReport.REASON_ABUSE,
+                description=reason or "User blocked from the conversation.",
+            )
+
         return Response(
             {
-                "message": "User blocked successfully.",
+                "message": "User blocked and reported successfully.",
                 "block": ChatBlockSerializer(block).data,
             },
             status=status.HTTP_200_OK,

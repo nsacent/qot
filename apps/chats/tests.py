@@ -394,6 +394,57 @@ class ChatDeliveryTests(APITestCase):
         other_participant = self.client.get(f"/api/v1/chats/threads/{thread.id}/")
         self.assertFalse(other_participant.data["blocked_by_me"])
 
+    def test_blocking_user_reports_them_and_removes_chat_from_main_inbox(self):
+        thread = ChatThread.objects.create(
+            listing=self.listing,
+            buyer=self.buyer,
+            seller=self.seller,
+        )
+
+        response = self.client.post(
+            f"/api/v1/chats/threads/{thread.id}/block/",
+            {"reason": "Abusive messages"},
+            format="json",
+        )
+        inbox = self.client.get("/api/v1/chats/threads/?filter=all")
+        spam = self.client.get("/api/v1/chats/threads/?filter=spam")
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(inbox.data["results"], [])
+        self.assertEqual(spam.data["results"][0]["id"], thread.id)
+        self.assertTrue(
+            ChatBlock.objects.filter(
+                thread=thread,
+                blocker=self.buyer,
+                blocked_user=self.seller,
+                is_active=True,
+            ).exists()
+        )
+        self.assertTrue(
+            ChatReport.objects.filter(
+                thread=thread,
+                reporter=self.buyer,
+                reported_user=self.seller,
+                reason=ChatReport.REASON_ABUSE,
+                description="Abusive messages",
+            ).exists()
+        )
+
+        self.client.post(
+            f"/api/v1/chats/threads/{thread.id}/block/",
+            {"reason": "Abusive messages"},
+            format="json",
+        )
+        self.assertEqual(
+            ChatReport.objects.filter(
+                thread=thread,
+                reporter=self.buyer,
+                reported_user=self.seller,
+                reason=ChatReport.REASON_ABUSE,
+            ).count(),
+            1,
+        )
+
     @patch("apps.chats.views.broadcast_chat_message_deleted")
     def test_sender_can_delete_one_message_but_recipient_cannot(self, broadcast_mock):
         thread = ChatThread.objects.create(
