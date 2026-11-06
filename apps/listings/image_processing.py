@@ -44,6 +44,8 @@ def _open_clean_image(image_file):
         image_file.open("rb")
 
     with Image.open(image_file) as source:
+        if source.format == "MPO":
+            source.seek(0)
         image = ImageOps.exif_transpose(source)
 
         if image.mode not in {"RGB", "RGBA"}:

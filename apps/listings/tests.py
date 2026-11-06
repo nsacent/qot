@@ -60,6 +60,71 @@ class ListingWatermarkTests(APITestCase):
 
 
 class ListingImageFormatTests(APITestCase):
+    def test_hdr_jpeg_mpo_uses_only_the_primary_photo(self):
+        image_bytes = BytesIO()
+        Image.new("RGB", (800, 600), (220, 60, 20)).save(
+            image_bytes,
+            format="MPO",
+            save_all=True,
+            append_images=[Image.new("RGB", (400, 300), (0, 255, 0))],
+        )
+        for name, content_type in (
+            ("iphone.jpg", "image/jpeg"),
+            ("iphone.jpeg", "image/jpeg"),
+            ("iphone.HEIC", "image/heic"),
+            ("iphone.heif", "image/heif"),
+        ):
+            with self.subTest(name=name):
+                upload = SimpleUploadedFile(name, image_bytes.getvalue(), content_type=content_type)
+                with Image.open(upload) as decoded:
+                    self.assertEqual(decoded.format, "MPO")
+                    self.assertEqual(decoded.n_frames, 2)
+                upload.seek(0)
+                serializer = ListingImageSerializer(data={"image": upload})
+                self.assertTrue(serializer.is_valid(), serializer.errors)
+                processed = process_listing_upload(serializer.validated_data["image"])
+                with Image.open(processed.source) as source:
+                    self.assertEqual(source.size, (800, 600))
+                    self.assertEqual(source.format, "WEBP")
+                    red, green, _ = source.getpixel((400, 300))
+                    self.assertGreater(red, 200)
+                    self.assertLess(green, 80)
+
+    def test_mpo_resolution_is_checked_on_the_primary_photo(self):
+        image_bytes = BytesIO()
+        Image.new("RGB", (400, 300)).save(
+            image_bytes, format="MPO", save_all=True,
+            append_images=[Image.new("RGB", (800, 600))],
+        )
+        upload = SimpleUploadedFile("iphone.jpg", image_bytes.getvalue(), content_type="image/jpeg")
+        serializer = ListingImageSerializer(data={"image": upload})
+        self.assertFalse(serializer.is_valid())
+        self.assertIn("600 × 450", str(serializer.errors["image"]))
+
+    def test_truncated_primary_mpo_photo_is_rejected(self):
+        image_bytes = BytesIO()
+        Image.new("RGB", (800, 600)).save(
+            image_bytes, format="MPO", save_all=True,
+            append_images=[Image.new("RGB", (400, 300))],
+        )
+        contents = image_bytes.getvalue()
+        first_jpeg_end = contents.index(b"\xff\xd9")
+        upload = SimpleUploadedFile("broken.jpg", contents[:first_jpeg_end // 2], content_type="image/jpeg")
+        serializer = ListingImageSerializer(data={"image": upload})
+        self.assertFalse(serializer.is_valid())
+        self.assertIn("not a valid image", str(serializer.errors["image"]))
+
+    def test_unsupported_formats_are_not_accepted_when_named_jpeg_or_heic(self):
+        for image_format in ("GIF", "AVIF"):
+            image_bytes = BytesIO()
+            Image.new("RGB", (800, 600)).save(image_bytes, format=image_format)
+            for name in ("photo.jpg", "photo.heic"):
+                with self.subTest(image_format=image_format, name=name):
+                    upload = SimpleUploadedFile(name, image_bytes.getvalue(), content_type="image/jpeg")
+                    serializer = ListingImageSerializer(data={"image": upload})
+                    self.assertFalse(serializer.is_valid())
+                    self.assertIn("Only JPG", str(serializer.errors["image"]))
+
     def test_real_spatial_heif_is_validated_and_all_variants_are_decodable(self):
         contents = (Path(__file__).parents[1] / "common" / "test_fixtures" / "heif" / "spatial_photo.heic").read_bytes()
         for name, content_type in (("iphone.HEIC", "image/heic"), ("iphone.heif", "image/heif")):
@@ -184,6 +249,32 @@ class ListingLifecycleTests(APITestCase):
         with Image.open(image.image) as decoded:
             decoded.load()
             self.assertEqual(decoded.format, "WEBP")
+
+    def test_hdr_jpeg_mpo_can_be_staged_for_an_ad(self):
+        self.authenticate_owner()
+        image_bytes = BytesIO()
+        Image.new("RGB", (800, 600), (220, 60, 20)).save(
+            image_bytes, format="MPO", save_all=True,
+            append_images=[Image.new("RGB", (400, 300), (0, 255, 0))],
+        )
+        response = self.client.post(
+            "/api/v1/listings/images/stage/",
+            {"image": SimpleUploadedFile("iphone.jpg", image_bytes.getvalue(), content_type="image/jpeg")},
+            format="multipart",
+        )
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED, response.data)
+        pending = PendingListingImage.objects.get(pk=response.data["id"])
+        self.assertTrue(pending.content_hash)
+        for field in (pending.source_image, pending.image, pending.card_image, pending.social_image):
+            with Image.open(field) as decoded:
+                decoded.load()
+                self.assertEqual(decoded.format, "WEBP")
+                self.assertFalse(getattr(decoded, "is_animated", False))
+        with Image.open(pending.source_image) as source:
+            self.assertEqual(source.size, (800, 600))
+            red, green, _ = source.getpixel((400, 300))
+            self.assertGreater(red, 200)
+            self.assertLess(green, 80)
 
     def make_image(
         self,

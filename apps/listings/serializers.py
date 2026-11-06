@@ -98,7 +98,9 @@ class ListingImageSerializer(serializers.ModelSerializer):
             "heifs",
             "hif",
         ]
-        allowed_formats = ["JPEG", "PNG", "WEBP", "HEIF"]
+        # JPEG exports can include HDR/gain-map images. Pillow identifies these
+        # JPEG containers as MPO; only their primary photograph is published.
+        allowed_formats = ["JPEG", "MPO", "PNG", "WEBP", "HEIF"]
 
         extension = image.name.split(".")[-1].lower()
 
@@ -135,6 +137,12 @@ class ListingImageSerializer(serializers.ModelSerializer):
                 raise serializers.ValidationError(
                     "Image resolution must be at least 600 × 450 pixels."
                 )
+
+            if img.format == "MPO":
+                img.seek(0)
+                # Verify the primary JPEG pixels as well as the container header.
+                # Auxiliary frames are not needed for marketplace photos.
+                img.load()
         except serializers.ValidationError:
             raise
         except Exception:
