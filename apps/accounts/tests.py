@@ -968,6 +968,24 @@ class ProfileMediaTests(APITestCase):
         self.assertTrue(self.user.profile.cover_photo.name.startswith("users/covers/"))
         self.assertEqual(self.user.profile.bio, "Trusted local seller")
 
+    def test_heic_avatar_and_heif_cover_are_stored_as_readable_jpeg(self):
+        contents = (Path(__file__).parents[1] / "common" / "test_fixtures" / "heif" / "spatial_photo.heic").read_bytes()
+        response = self.client.patch(
+            self.me_url,
+            {
+                "avatar": SimpleUploadedFile("avatar.heic", contents, content_type="image/heic"),
+                "cover_photo": SimpleUploadedFile("cover.heif", contents, content_type="image/heif"),
+            },
+            format="multipart",
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK, response.data)
+        self.user.profile.refresh_from_db()
+        for field in (self.user.profile.avatar, self.user.profile.cover_photo):
+            self.assertTrue(field.name.endswith(".jpg"))
+            with Image.open(field) as image:
+                image.load()
+                self.assertEqual(image.format, "JPEG")
+
 
 @override_settings(GOOGLE_OAUTH_CLIENT_ID="qot-test.apps.googleusercontent.com")
 class GoogleAuthenticationTests(APITestCase):

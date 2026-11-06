@@ -8,4 +8,5 @@ class ListingsConfig(AppConfig):
     label = "listings"
 
     def ready(self):
-        register_heif_opener()
+        # Uploads use the primary photo, not portrait depth maps or HDR auxiliaries.
+        register_heif_opener(thumbnails=False, depth_images=False, aux_images=False)

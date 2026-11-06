@@ -6,6 +6,7 @@ from rest_framework import serializers
 from apps.listings.models import Listing
 from apps.listings.serializers import ListingListSerializer
 from apps.accounts.phone_numbers import normalize_ugandan_phone
+from apps.common.image_uploads import normalize_heif_upload
 
 from .models import (
     ChatThread,
@@ -349,6 +350,9 @@ class ChatMessageCreateSerializer(serializers.ModelSerializer):
             "reply_to",
         ]
 
+    def validate_image(self, image):
+        return normalize_heif_upload(image, max_bytes=10 * 1024 * 1024)
+
     def validate(self, attrs):
         message_type = attrs.get("message_type", ChatMessage.TYPE_TEXT)
         body = attrs.get("body")
@@ -457,6 +461,7 @@ class ChatAttachmentUploadSerializer(serializers.Serializer):
                 "Attachment size cannot exceed 10MB."
             )
 
+        file = normalize_heif_upload(file, max_bytes=max_size)
         allowed_extensions = [
             ".jpg",
             ".jpeg",

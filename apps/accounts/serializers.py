@@ -16,6 +16,7 @@ from google.oauth2 import id_token as google_id_token
 import jwt
 
 from apps.locations.models import Area, City
+from apps.common.image_uploads import normalize_heif_upload
 
 from .models import User, UserFollow, UserProfile, UserSession, VerificationCode
 from .phone_numbers import normalize_ugandan_phone
@@ -115,6 +116,12 @@ class UserProfileSerializer(serializers.ModelSerializer):
             "created_at",
             "updated_at",
         ]
+
+    def validate_avatar(self, value):
+        return normalize_heif_upload(value, max_bytes=5 * 1024 * 1024)
+
+    def validate_cover_photo(self, value):
+        return normalize_heif_upload(value, max_bytes=5 * 1024 * 1024)
 
     def validate_notification_preferences(self, value):
         if not isinstance(value, dict):
@@ -667,6 +674,7 @@ class ProfileUpdateSerializer(serializers.ModelSerializer):
         if value.size > 5 * 1024 * 1024:
             raise serializers.ValidationError("Image must be 5MB or smaller.")
 
+        value = normalize_heif_upload(value, max_bytes=5 * 1024 * 1024)
         content_type = getattr(value, "content_type", "")
         if content_type and content_type not in {"image/jpeg", "image/png", "image/webp"}:
             raise serializers.ValidationError("Use a JPG, PNG, or WEBP image.")

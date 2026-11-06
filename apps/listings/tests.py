@@ -60,6 +60,25 @@ class ListingWatermarkTests(APITestCase):
 
 
 class ListingImageFormatTests(APITestCase):
+    def test_real_spatial_heif_is_validated_and_all_variants_are_decodable(self):
+        contents = (Path(__file__).parents[1] / "common" / "test_fixtures" / "heif" / "spatial_photo.heic").read_bytes()
+        for name, content_type in (("iphone.HEIC", "image/heic"), ("iphone.heif", "image/heif")):
+            with self.subTest(name=name):
+                upload = SimpleUploadedFile(name, contents, content_type=content_type)
+                serializer = ListingImageSerializer(data={"image": upload})
+                self.assertTrue(serializer.is_valid(), serializer.errors)
+                processed = process_listing_upload(serializer.validated_data["image"])
+                for field, size in (
+                    (processed.source, (2560, 2560)),
+                    (processed.detail, (1920, 1920)),
+                    (processed.card, (800, 600)),
+                    (processed.social, (1200, 630)),
+                ):
+                    with Image.open(field) as image:
+                        image.load()
+                        self.assertEqual(image.format, "WEBP")
+                        self.assertEqual(image.size, size)
+
     def test_heif_family_uploads_are_validated_and_optimized(self):
         image_bytes = BytesIO()
         Image.new("RGB", (800, 600), color=(249, 115, 22)).save(
@@ -149,6 +168,22 @@ class ListingLifecycleTests(APITestCase):
 
     def authenticate_owner(self):
         self.client.force_authenticate(self.owner)
+
+    def test_real_spatial_heif_can_be_staged_for_an_ad(self):
+        self.authenticate_owner()
+        contents = (Path(__file__).parents[1] / "common" / "test_fixtures" / "heif" / "spatial_photo.heic").read_bytes()
+        response = self.client.post(
+            "/api/v1/listings/images/stage/",
+            {"image": SimpleUploadedFile("iphone.heif", contents, content_type="image/heif")},
+            format="multipart",
+        )
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED, response.data)
+        image = PendingListingImage.objects.get(pk=response.data["id"])
+        self.assertTrue(image.source_image.name.endswith(".webp"))
+        self.assertTrue(image.content_hash)
+        with Image.open(image.image) as decoded:
+            decoded.load()
+            self.assertEqual(decoded.format, "WEBP")
 
     def make_image(
         self,

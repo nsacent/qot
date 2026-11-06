@@ -7,7 +7,9 @@ channels
 channels-redis
 psycopg[binary]
 Pillow
-pillow-heif>=0.21,<2
+# Includes current iPhone depth/HDR compatibility; keep deployments from retaining
+# an older, already-satisfied decoder. 1.8.1 still supports production Python 3.10.
+pillow-heif==1.8.1
 python-decouple
 redis>=5,<8
 celery

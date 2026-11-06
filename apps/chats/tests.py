@@ -9,6 +9,7 @@ from django.core import signing
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import override_settings
 from django.utils import timezone
+from PIL import Image
 from rest_framework import status
 from rest_framework.test import APITestCase
 
@@ -216,6 +217,36 @@ class ChatDeliveryTests(APITestCase):
 
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertEqual(ChatMessage.objects.count(), 0)
+
+    @patch("apps.chats.views.broadcast_chat_message")
+    @patch("apps.chats.views.create_message_notification")
+    def test_heif_attachment_and_image_message_are_stored_as_jpeg(self, notification_mock, broadcast_mock):
+        thread = ChatThread.objects.create(listing=self.listing, buyer=self.buyer, seller=self.seller)
+        contents = (Path(__file__).parents[1] / "common" / "test_fixtures" / "heif" / "spatial_photo.heic").read_bytes()
+        response = self.client.post(
+            f"/api/v1/chats/threads/{thread.id}/attachments/",
+            {"files": [SimpleUploadedFile("photo.heif", contents, content_type="image/heif")]},
+            format="multipart",
+        )
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED, response.data)
+        attachment = ChatMessageAttachment.objects.get()
+        self.assertEqual(attachment.file_type, ChatMessageAttachment.FILE_TYPE_IMAGE)
+        self.assertEqual(attachment.original_name, "photo.jpg")
+        with Image.open(attachment.file) as image:
+            image.load()
+            self.assertEqual(image.format, "JPEG")
+
+        response = self.client.post(
+            f"/api/v1/chats/threads/{thread.id}/messages/",
+            {"message_type": "image", "image": SimpleUploadedFile("photo.heic", contents, content_type="image/heic")},
+            format="multipart",
+        )
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED, response.data)
+        message = ChatMessage.objects.get(pk=response.data["id"])
+        self.assertTrue(message.image.name.endswith(".jpg"))
+        with Image.open(message.image) as image:
+            image.load()
+            self.assertEqual(image.format, "JPEG")
 
     def test_conversation_search_finds_message_ad_seller_and_local_phone(self):
         thread = ChatThread.objects.create(
